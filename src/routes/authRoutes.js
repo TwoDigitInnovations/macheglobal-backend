@@ -7,7 +7,7 @@ const {
   verifyOTP,
   changePassword,
   updateProfile,
-  changePasswordFOrAdmin
+  changePasswordfromAdmin
 } = require('@controllers/authController');
 const { authenticate } = require('@middlewares/authMiddleware');
 
@@ -22,9 +22,9 @@ router.post('/updateProfile', updateProfile);
 router.post('/verifyOTP', verifyOTP);
 router.post('/changePassword', changePassword);
 router.post(
-  '/auth/changePasswordForAdmin',
+  '/changePasswordfromAdmin',
   authenticate,
-  changePasswordFOrAdmin
+  changePasswordfromAdmin
 );
 
 module.exports = router;

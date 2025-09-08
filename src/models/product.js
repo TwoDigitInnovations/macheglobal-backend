@@ -7,6 +7,10 @@ const productchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category'
     },
+    SellerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
     categoryName: {
       type: String
     },

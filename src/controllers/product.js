@@ -76,28 +76,41 @@ module.exports = {
 
   getProduct: async (req, res) => {
     try {
-      let page = parseInt(req.query.page) || 1;
-      let limit = parseInt(req.query.limit);
+      let page = parseInt(req.query.page);
+      let limit = parseInt(req.query.limit) ;
       let skip = (page - 1) * limit;
 
-      let product = await Product.find()
-        .populate('category')
+      let cond = {};
+
+      if (req.query.searchTerm) {
+        cond.$or = [
+          { name: { $regex: req.query.searchTerm, $options: "i" } },
+          { short_description: { $regex: req.query.searchTerm, $options: "i" } },
+        ];
+      }
+
+      if (req.query.SellerId) {
+        cond.SellerId = req.query.SellerId;
+      }
+
+      let products = await Product.find(cond)
+        .populate("category")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
 
-      let totalProducts = await Product.countDocuments();
+      let totalProducts = await Product.countDocuments(cond);
       const totalPages = Math.ceil(totalProducts / limit);
 
       return res.status(200).json({
         status: true,
-        data: product,
+        data: products,
         pagination: {
           totalItems: totalProducts,
-          totalPages: totalPages,
+          totalPages,
           currentPage: page,
-          itemsPerPage: limit
-        }
+          itemsPerPage: limit,
+        },
       });
     } catch (error) {
       return response.error(res, error);

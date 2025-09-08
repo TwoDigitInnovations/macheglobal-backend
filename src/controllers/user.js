@@ -1,9 +1,9 @@
 const User = require('@models/User');
 const response = require('../../responses');
 const Review = require('@models/Review');
-
+const SellerWallet = require("../models/SellerWallet");
 module.exports = {
- 
+
   giverate: async (req, res) => {
     console.log(req.body);
     try {
@@ -92,7 +92,7 @@ module.exports = {
       return response.error(res, error);
     }
   },
-  
+
   fileUpload: async (req, res) => {
     try {
       if (!req.file) {
@@ -109,36 +109,69 @@ module.exports = {
     }
   },
 
- getUserList: async (req, res) => {
-  try {
-    const { type, page = 1, limit = 10 } = req.query; // frontend se aayega
-    const cond = { role: type };
+  getUserList: async (req, res) => {
+    try {
+      const { type, page = 1, limit = 10 } = req.query; // frontend se aayega
+      const cond = { role: type };
 
-    // total count for pagination
-    const totalUsers = await User.countDocuments(cond);
+      // total count for pagination
+      const totalUsers = await User.countDocuments(cond);
 
-    // calculate skip
-    const skip = (page - 1) * limit;
+      // calculate skip
+      const skip = (page - 1) * limit;
 
-    // fetch users with pagination
-    const users = await User.find(cond)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(Number(limit));
+      // fetch users with pagination
+      const users = await User.find(cond)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit));
 
-    return res.status(200).json({
-      status: true,
-      data: users,
-      pagination: {
-        total: totalUsers,
-        page: Number(page),
-        limit: Number(limit),
-        totalPages: Math.ceil(totalUsers / limit),
-      },
-    });
-  } catch (error) {
-    return response.error(res, error);
+      return res.status(200).json({
+        status: true,
+        data: users,
+        pagination: {
+          total: totalUsers,
+          page: Number(page),
+          limit: Number(limit),
+          totalPages: Math.ceil(totalUsers / limit),
+        },
+      });
+    } catch (error) {
+      return response.error(res, error);
+    }
+  },
+
+  updateStatus: async (req, res) => {
+    try {
+      const { Status, SellerId } = req.body;
+      console.log("seller", SellerId, Status)
+      let seller = await User.findByIdAndUpdate(
+        { _id: SellerId, },
+        { status: Status },
+        { new: true }
+      );
+      console.log("seller", seller)
+      if (!seller) {
+        return response.error(res, "Seller not found");
+      }
+
+      if (seller.role === "Seller" && Status.toLowerCase() === "verified") {
+        const existingWallet = await SellerWallet.findOne({ sellerId: seller._id });
+
+        if (!existingWallet) {
+          await SellerWallet.create({
+            sellerId: seller._id,
+            balance: 0,
+            transactions: []
+          });
+        }
+      }
+
+      return response.ok(res, seller);
+    } catch (error) {
+      return response.error(res, error);
+    }
   }
-}
+
 
 };

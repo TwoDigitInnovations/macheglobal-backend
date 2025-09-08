@@ -32,5 +32,5 @@ router.post('/update', authenticate, Content.updateContent);
 router.get('/getUserList', user.getUserList);
 router.get('/getsetting', setting.getSetting);
 router.post('/createOrUpdateImage', authenticate, setting.createOrUpdateImage);
-
+router.post("/updateStatusSeller", user.updateStatus)
 module.exports = router;
