@@ -20,9 +20,8 @@ const storage = new CloudinaryStorage({
         file.originalname,
         path.extname(file.originalname)
       );
-      return `${Date.now()}-${fileBaseName}`; 
+      return `${Date.now()}-${fileBaseName}`;
     }
-
   }
 });
 

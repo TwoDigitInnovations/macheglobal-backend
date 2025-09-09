@@ -1,9 +1,8 @@
 const User = require('@models/User');
 const response = require('../../responses');
 const Review = require('@models/Review');
-const SellerWallet = require("../models/SellerWallet");
+const SellerWallet = require('../models/SellerWallet');
 module.exports = {
-
   giverate: async (req, res) => {
     console.log(req.body);
     try {
@@ -133,8 +132,8 @@ module.exports = {
           total: totalUsers,
           page: Number(page),
           limit: Number(limit),
-          totalPages: Math.ceil(totalUsers / limit),
-        },
+          totalPages: Math.ceil(totalUsers / limit)
+        }
       });
     } catch (error) {
       return response.error(res, error);
@@ -144,19 +143,21 @@ module.exports = {
   updateStatus: async (req, res) => {
     try {
       const { Status, SellerId } = req.body;
-      console.log("seller", SellerId, Status)
+      console.log('seller', SellerId, Status);
       let seller = await User.findByIdAndUpdate(
-        { _id: SellerId, },
+        { _id: SellerId },
         { status: Status },
         { new: true }
       );
-      console.log("seller", seller)
+      console.log('seller', seller);
       if (!seller) {
-        return response.error(res, "Seller not found");
+        return response.error(res, 'Seller not found');
       }
 
-      if (seller.role === "Seller" && Status.toLowerCase() === "verified") {
-        const existingWallet = await SellerWallet.findOne({ sellerId: seller._id });
+      if (seller.role === 'Seller' && Status.toLowerCase() === 'verified') {
+        const existingWallet = await SellerWallet.findOne({
+          sellerId: seller._id
+        });
 
         if (!existingWallet) {
           await SellerWallet.create({
@@ -172,6 +173,4 @@ module.exports = {
       return response.error(res, error);
     }
   }
-
-
 };

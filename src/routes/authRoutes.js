@@ -11,7 +11,6 @@ const {
 } = require('@controllers/authController');
 const { authenticate } = require('@middlewares/authMiddleware');
 
-
 const router = express.Router();
 
 router.post('/login', login);
@@ -21,10 +20,6 @@ router.post('/sendOTP', sendOTP);
 router.post('/updateProfile', updateProfile);
 router.post('/verifyOTP', verifyOTP);
 router.post('/changePassword', changePassword);
-router.post(
-  '/changePasswordfromAdmin',
-  authenticate,
-  changePasswordfromAdmin
-);
+router.post('/changePasswordfromAdmin', authenticate, changePasswordfromAdmin);
 
 module.exports = router;

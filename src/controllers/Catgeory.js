@@ -1,7 +1,6 @@
 'use strict';
 
 const Category = require('@models/Category');
-const mongoose = require('mongoose');
 const response = require('../../responses');
 
 module.exports = {

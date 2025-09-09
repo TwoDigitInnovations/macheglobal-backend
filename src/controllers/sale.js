@@ -1,5 +1,3 @@
-const mongoose = require('mongoose');
-
 const response = require('./../../responses');
 const FlashSale = require('@models/sale');
 
@@ -42,8 +40,8 @@ module.exports = {
       const { SellerId } = req.query;
       const flashSales = await FlashSale.find({ SellerId: SellerId })
         .populate({
-          path: "product",
-          select: "name categoryName varients sellerId",
+          path: 'product',
+          select: 'name categoryName varients sellerId'
         })
         .sort({ createdAt: -1 });
       return response.ok(res, flashSales);
@@ -51,7 +49,6 @@ module.exports = {
       return response.error(res, error);
     }
   },
-
 
   getActiveFlashSales: async (req, res) => {
     try {
@@ -113,7 +110,7 @@ module.exports = {
       const { SellerId } = req.query;
 
       if (!SellerId) {
-        return response.error(res, { message: "SellerId is required" });
+        return response.error(res, { message: 'SellerId is required' });
       }
 
       const deletedFlashSale = await FlashSale.findOneAndDelete({
@@ -140,14 +137,14 @@ module.exports = {
       const { SellerId } = req.query;
 
       if (!SellerId) {
-        return response.error(res, { message: "SellerId is required" });
+        return response.error(res, { message: 'SellerId is required' });
       }
 
       const result = await FlashSale.deleteMany({ SellerId });
 
       if (result.deletedCount === 0) {
         return response.error(res, {
-          message: "No flash sales found to delete for this seller."
+          message: 'No flash sales found to delete for this seller.'
         });
       }
 
@@ -159,7 +156,6 @@ module.exports = {
     }
   },
 
-
   toggleFlashSaleStatus: async (req, res) => {
     try {
       const { id } = req.params;
@@ -167,7 +163,7 @@ module.exports = {
       const { SellerId } = req.query; // ✅ query se sellerId le rahe hain
 
       if (!SellerId) {
-        return response.error(res, { message: "SellerId is required" });
+        return response.error(res, { message: 'SellerId is required' });
       }
 
       if (!['ACTIVE', 'INACTIVE'].includes(status)) {
@@ -195,7 +191,6 @@ module.exports = {
       return response.error(res, error);
     }
   },
-
 
   endExpiredFlashSales: async () => {
     try {

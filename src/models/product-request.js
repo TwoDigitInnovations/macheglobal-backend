@@ -92,7 +92,7 @@ const productrequestchema = new mongoose.Schema(
 productrequestchema.set('toJSON', {
   getters: true,
   virtuals: false,
-  transform: (doc, ret, options) => {
+  transform: (doc, ret) => {
     delete ret.__v;
     return ret;
   }

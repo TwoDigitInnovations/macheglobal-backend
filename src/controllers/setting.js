@@ -1,7 +1,4 @@
-const mongoose = require('mongoose');
-
 const Setting = require('@models/setting');
-const response = require('../../responses');
 
 module.exports = {
   getSetting: async (req, res) => {

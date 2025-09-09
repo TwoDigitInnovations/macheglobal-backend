@@ -5,8 +5,7 @@ const response = require('../../responses');
 const Verification = require('@models/verification');
 const userHelper = require('../helper/user');
 const mailNotification = require('./../services/mailNotification');
-const SellerWallet = require("../models/SellerWallet");
-const AdminWallet = require("../models/AdminWallet")
+const AdminWallet = require('../models/AdminWallet');
 
 module.exports = {
   register: async (req, res) => {
@@ -36,7 +35,7 @@ module.exports = {
 
       await newUser.save();
 
-      if (role === "Admin") {
+      if (role === 'Admin') {
         const existingAdminWallet = await AdminWallet.findOne();
         if (!existingAdminWallet) {
           await AdminWallet.create({
@@ -48,7 +47,9 @@ module.exports = {
 
       const userResponse = await User.findById(newUser._id).select('-password');
 
-      res.status(201).json({ message: 'User registered successfully', user: userResponse });
+      res
+        .status(201)
+        .json({ message: 'User registered successfully', user: userResponse });
     } catch (error) {
       console.error(error);
       res.status(500).json({ message: 'Server error' });
@@ -59,29 +60,33 @@ module.exports = {
       const { email, password } = req.body;
 
       if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
+        return res
+          .status(400)
+          .json({ message: 'Email and password are required' });
       }
 
       const user = await User.findOne({ email });
       if (!user) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        return res.status(401).json({ message: 'Invalid credentials' });
       }
 
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-
-      if (user.role === "Seller") {
-        if (user.status === "pending") {
-          return res.status(403).json({ message: "Please wait until your account is verified by admin." });
+      if (user.role === 'Seller') {
+        if (user.status === 'pending') {
+          return res.status(403).json({
+            message: 'Please wait until your account is verified by admin.'
+          });
         }
-        if (user.status === "suspend") {
-          return res.status(403).json({ message: "Your account has been suspended. Contact support." });
+        if (user.status === 'suspend') {
+          return res.status(403).json({
+            message: 'Your account has been suspended. Contact support.'
+          });
         }
       }
-
 
       const token = jwt.sign(
         { id: user._id, email: user.email, role: user.role },
@@ -90,16 +95,15 @@ module.exports = {
       );
 
       return response.ok(res, {
-        message: "Login successful",
+        message: 'Login successful',
         token,
         user
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ message: "Server error" });
+      return res.status(500).json({ message: 'Server error' });
     }
   },
-
 
   getUser: async (req, res) => {
     try {
@@ -274,19 +278,22 @@ module.exports = {
       const userId = req.user.id; // middleware से मिल रहा है
 
       if (!currentPassword || !newPassword) {
-        return response.error(res, "Old password and new password are required");
+        return response.error(
+          res,
+          'Old password and new password are required'
+        );
       }
 
       let user = await User.findById(userId);
 
       if (!user) {
-        return response.error(res, "User not found");
+        return response.error(res, 'User not found');
       }
 
       // Purana password check karo
       const isMatch = await bcrypt.compare(currentPassword, user.password);
       if (!isMatch) {
-        return response.error(res, "Old password is incorrect");
+        return response.error(res, 'Old password is incorrect');
       }
 
       // New password encrypt karke save karo
@@ -295,12 +302,11 @@ module.exports = {
       await user.save();
 
       return response.ok(res, {
-        message: "Password changed successfully",
+        message: 'Password changed successfully',
         role: user.role
       });
     } catch (error) {
-      return response.error(res, error.message || "Something went wrong");
+      return response.error(res, error.message || 'Something went wrong');
     }
   }
-
 };

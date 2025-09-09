@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema(
       type: object
     },
     status: {
-      type:String,
+      type: String,
       enum: ['pending', 'verified', 'suspend'], // Define user roles
       default: 'pending'
     },

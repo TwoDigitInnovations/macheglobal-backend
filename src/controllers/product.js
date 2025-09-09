@@ -77,15 +77,17 @@ module.exports = {
   getProduct: async (req, res) => {
     try {
       let page = parseInt(req.query.page);
-      let limit = parseInt(req.query.limit) ;
+      let limit = parseInt(req.query.limit);
       let skip = (page - 1) * limit;
 
       let cond = {};
 
       if (req.query.searchTerm) {
         cond.$or = [
-          { name: { $regex: req.query.searchTerm, $options: "i" } },
-          { short_description: { $regex: req.query.searchTerm, $options: "i" } },
+          { name: { $regex: req.query.searchTerm, $options: 'i' } },
+          {
+            short_description: { $regex: req.query.searchTerm, $options: 'i' }
+          }
         ];
       }
 
@@ -94,7 +96,7 @@ module.exports = {
       }
 
       let products = await Product.find(cond)
-        .populate("category")
+        .populate('category')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
@@ -109,8 +111,8 @@ module.exports = {
           totalItems: totalProducts,
           totalPages,
           currentPage: page,
-          itemsPerPage: limit,
-        },
+          itemsPerPage: limit
+        }
       });
     } catch (error) {
       return response.error(res, error);
@@ -130,9 +132,9 @@ module.exports = {
 
       const favourite = req.query.user
         ? await Favourite.findOne({
-          product: product._id,
-          user: req.query.user
-        })
+            product: product._id,
+            user: req.query.user
+          })
         : null;
 
       const productObj = product.toObject();
@@ -330,7 +332,6 @@ module.exports = {
     }
   },
 
-
   requestProduct: async (req, res) => {
     try {
       const payload = req?.body || {};
@@ -455,7 +456,6 @@ module.exports = {
       return response.error(res, error);
     }
   },
-
 
   getOrderBySeller: async (req, res) => {
     try {
