@@ -7,7 +7,9 @@ const {
   verifyOTP,
   changePassword,
   updateProfile,
-  changePasswordfromAdmin
+  changePasswordfromAdmin,
+  forgotPassword,
+  resetPassword
 } = require('@controllers/authController');
 const { authenticate } = require('@middlewares/authMiddleware');
 
@@ -21,5 +23,9 @@ router.post('/updateProfile', updateProfile);
 router.post('/verifyOTP', verifyOTP);
 router.post('/changePassword', changePassword);
 router.post('/changePasswordfromAdmin', authenticate, changePasswordfromAdmin);
+
+// Forgot password routes
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 
 module.exports = router;

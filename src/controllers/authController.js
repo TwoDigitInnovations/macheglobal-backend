@@ -8,34 +8,52 @@ const mailNotification = require('./../services/mailNotification');
 const AdminWallet = require('../models/AdminWallet');
 
 module.exports = {
-  register: async (req, res) => {
+  register: async (req, res, next) => {
     try {
       const { name, email, password, phone, role } = req.body;
 
-      if (password.length < 6) {
-        return res
-          .status(400)
-          .json({ message: 'Password must be at least 6 characters long' });
+      // Input validation
+      if (!name || !email || !password || !phone || !role) {
+        return res.status(400).json({
+          success: false,
+          message: 'All fields are required'
+        });
       }
 
+      if (password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password must be at least 6 characters long'
+        });
+      }
+
+      // Check if user already exists
       const existingUser = await User.findOne({ email });
       if (existingUser) {
-        return res.status(400).json({ message: 'User already exists' });
+        return res.status(400).json({
+          success: false,
+          message: 'User with this email already exists'
+        });
       }
 
+      // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
+      // Create new user
       const newUser = new User({
         name,
-        email,
+        email: email.toLowerCase(),
         password: hashedPassword,
         phone,
-        role
+        role: role.charAt(0).toUpperCase() + role.slice(1), // Capitalize first letter
+        isActive: true
       });
 
+      // Save user to database
       await newUser.save();
 
-      if (role === 'Admin') {
+      // Create admin wallet if user is admin
+      if (newUser.role === 'Admin') {
         const existingAdminWallet = await AdminWallet.findOne();
         if (!existingAdminWallet) {
           await AdminWallet.create({
@@ -45,14 +63,20 @@ module.exports = {
         }
       }
 
+      // Get user data without password
       const userResponse = await User.findById(newUser._id).select('-password');
 
-      res
-        .status(201)
-        .json({ message: 'User registered successfully', user: userResponse });
+      // Return success response
+      return res.status(201).json({
+        success: true,
+        message: 'User registered successfully',
+        data: userResponse
+      });
+
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Server error' });
+      console.error('Registration error:', error);
+      // Pass error to express error handler
+      next(error);
     }
   },
   login: async (req, res) => {
@@ -274,31 +298,30 @@ module.exports = {
 
   changePasswordfromAdmin: async (req, res) => {
     try {
-      const { currentPassword, newPassword } = req.body;
-      const userId = req.user.id; // middleware से मिल रहा है
+      const { userId, newPassword, confirmPassword } = req.body;
 
-      if (!currentPassword || !newPassword) {
-        return response.error(
-          res,
-          'Old password and new password are required'
-        );
+      if (!userId || !newPassword || !confirmPassword) {
+        return response.badRequest(res, 'All fields are required');
       }
 
-      let user = await User.findById(userId);
+      if (newPassword !== confirmPassword) {
+        return response.badRequest(res, 'Passwords do not match');
+      }
 
+      const user = await User.findById(userId);
       if (!user) {
-        return response.error(res, 'User not found');
+        return response.notFound(res, 'User not found');
       }
 
-      // Purana password check karo
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return response.error(res, 'Old password is incorrect');
+      // Check if new password is same as old password
+      const isMatch = await bcrypt.compare(newPassword, user.password);
+      if (isMatch) {
+        return response.badRequest(res, 'New password cannot be same as old password');
       }
 
-      // New password encrypt karke save karo
-      const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(newPassword, salt);
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      user.password = hashedPassword;
       await user.save();
 
       return response.ok(res, {
@@ -307,6 +330,105 @@ module.exports = {
       });
     } catch (error) {
       return response.error(res, error.message || 'Something went wrong');
+    }
+  },
+
+  // Forgot Password - Send OTP
+  forgotPassword: async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required'
+        });
+      }
+
+      // Check if user exists
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'No user found with this email'
+        });
+      }
+
+      // Generate a simple 4-digit OTP (0000 for now)
+      const otp = '0000';
+      const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // OTP valid for 10 minutes
+
+      // Save OTP to user document
+      user.resetPasswordToken = otp;
+      user.resetPasswordExpires = otpExpiry;
+      await user.save();
+
+      // In a real app, you would send this OTP via email using nodemailer
+      console.log(`OTP for ${email}: ${otp}`);
+
+      res.status(200).json({
+        success: true,
+        message: 'OTP sent to your email',
+        data: { email }
+      });
+
+    } catch (error) {
+      console.error('Forgot password error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error',
+        error: error.message
+      });
+    }
+  },
+
+  // Verify OTP and Reset Password
+  resetPassword: async (req, res) => {
+    try {
+      const { email, otp, newPassword } = req.body;
+
+      if (!email || !otp || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email, OTP and new password are required'
+        });
+      }
+
+      // Find user by email
+      const user = await User.findOne({ 
+        email,
+        resetPasswordToken: otp,
+        resetPasswordExpires: { $gt: Date.now() }
+      });
+
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired OTP'
+        });
+      }
+
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      
+      // Update user's password and clear reset token
+      user.password = hashedPassword;
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpires = undefined;
+      await user.save();
+
+      res.status(200).json({
+        success: true,
+        message: 'Password reset successful'
+      });
+
+    } catch (error) {
+      console.error('Reset password error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error',
+        error: error.message
+      });
     }
   }
 };

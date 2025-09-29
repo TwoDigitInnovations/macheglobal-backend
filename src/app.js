@@ -31,9 +31,18 @@ app.get('/', (req, res) => {
 });
 
 // Global Error Handler
-app.use((err, req, res) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  
+  if (res.headersSent) {
+    return next(err);
+  }
+  
+  res.status(500).json({ 
+    success: false,
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : {}
+  });
 });
 
 module.exports = app;

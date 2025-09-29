@@ -38,8 +38,16 @@ const userSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'verified', 'suspend'], // Define user roles
+      enum: ['pending', 'verified', 'suspend'],
       default: 'pending'
+    },
+    resetPasswordToken: {
+      type: String,
+      default: null
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null
     },
     createdAt: {
       type: Date,
