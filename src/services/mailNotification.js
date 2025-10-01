@@ -3,21 +3,53 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS
+    user: 'Macheglobal2026@gmail.com',
+    pass: 'czygnhtdtahujirh' // Replace with the 16-char app password from Google
   }
 });
 
 const sendMail = async (to, subject, html) => {
   return new Promise((resolve, reject) => {
+    if (!to) {
+      console.error('No recipient email address provided');
+      return reject(new Error('No recipient email address'));
+    }
+
     const mailConfigurations = {
-      from: `Jasz & Co <${process.env.MAIL_USER}>`,
-      to,
+      from: `Mache Global <Macheglobal2026@gmail.com>`,
+      to: Array.isArray(to) ? to.join(', ') : to,
       subject,
-      html
+      html,
+      // Add more debugging info
+      headers: {
+        'X-Mailer': 'Mache Global Mailer',
+        'X-Priority': '1',
+        'X-MSMail-Priority': 'High'
+      }
     };
+
+    console.log('Attempting to send email:', {
+      to: mailConfigurations.to,
+      subject,
+      time: new Date().toISOString()
+    });
+
     transporter.sendMail(mailConfigurations, function (error, info) {
-      if (error) return reject(error);
+      if (error) {
+        console.error('Email send error:', {
+          error: error.message,
+          code: error.code,
+          to,
+          time: new Date().toISOString()
+        });
+        return reject(error);
+      }
+      
+      console.log('Email sent successfully:', {
+        messageId: info.messageId,
+        to,
+        time: new Date().toISOString()
+      });
       return resolve(info);
     });
   });
@@ -66,18 +98,35 @@ module.exports = {
   sendOTPmail: async ({ email, code }) => {
     try {
       const html = `
-      <div style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
-        <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 30px; border: 1px solid #ddd;">
-          <h2 style="color: #127300; text-align: center;">Verify Your Email</h2>
-          <p>Hello,</p>
-          <p>Welcome to <strong>Jasz & Co</strong>!</p>
-          <p>Your one-time password (OTP) is: <strong>${code}</strong></p>
-          <p>This code will expire in 5 minutes.</p>
-          <p>Thanks,<br/><strong style="color: #127300;">The Jasz & Co Team</strong></p>
+      <div style="font-family: Arial, sans-serif; background-color: #f8f8f8; padding: 20px;">
+        <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <div style="background-color: #FF7000; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Mache Global</h1>
+          </div>
+          
+          <div style="padding: 30px;">
+            <h2 style="color: #333; margin-top: 0; text-align: center;">Email Verification</h2>
+            <p style="color: #555; line-height: 1.6;">Hello,</p>
+            <p style="color: #555; line-height: 1.6;">Thank you for choosing Mache Global. Please use the following OTP to verify your email address:</p>
+            
+            <div style="background-color: #f5f5f5; border-left: 4px solid #FF7000; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <div style="font-size: 28px; font-weight: bold; color: #FF7000; text-align: center; letter-spacing: 5px;">${code}</div>
+            </div>
+            
+            <p style="color: #777; font-size: 14px; margin-bottom: 25px;">This OTP is valid for 5 minutes. Please do not share it with anyone.</p>
+            
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+              <p style="margin: 0; color: #999; font-size: 12px;">If you didn't request this email, you can safely ignore it.</p>
+            </div>
+          </div>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #888;">
+            <p style="margin: 5px 0;">© ${new Date().getFullYear()} Mache Global. All rights reserved.</p>
+          </div>
         </div>
       </div>`;
 
-      return await sendMail(email, 'Your OTP Code - Jasz & Co', html);
+      return await sendMail(email, 'Your OTP Code - Mache Global', html);
     } catch (err) {
       console.error(err);
       throw new Error('Could not send OTP mail');
@@ -107,26 +156,86 @@ module.exports = {
     }
   },
 
+  sellerVerified: async (seller) => {
+    try {
+      const html = `
+      <div style="font-family: Arial, sans-serif; background-color: #f8f8f8; padding: 20px;">
+        <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <div style="background-color: #FF7000; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Mache Global</h1>
+          </div>
+          
+          <div style="padding: 30px;">
+            <h2 style="color: #333; margin-top: 0; text-align: center;">Account Verified Successfully!</h2>
+            <p style="color: #555; line-height: 1.6;">Dear ${seller.name || 'Valued Seller'},</p>
+            
+            <p style="color: #555; line-height: 1.6;">We are pleased to inform you that your seller account has been successfully verified by our team.</p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <div style="display: inline-block; background-color: #e8f5e9; border-radius: 50%; width: 80px; height: 80px; text-align: center; line-height: 80px;">
+                <span style="color: #4caf50; font-size: 40px;">✓</span>
+              </div>
+            </div>
+            
+            <p style="color: #555; line-height: 1.6;">You can now access your seller dashboard and start listing your products.</p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${process.env.FRONTEND_URL || 'https://macheglobal.com/seller/dashboard'}" 
+                 style="display: inline-block; background-color: #FF7000; color: white; 
+                        text-decoration: none; padding: 12px 30px; border-radius: 4px; 
+                        font-weight: bold; font-size: 16px;">
+                Go to Seller Dashboard
+              </a>
+            </div>
+            
+            <p style="color: #777; font-size: 14px; margin-top: 30px;">
+              If you have any questions or need assistance, please don't hesitate to contact our support team.
+            </p>
+          </div>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #eee;">
+            <p style="margin: 5px 0;">© ${new Date().getFullYear()} Mache Global. All rights reserved.</p>
+          </div>
+        </div>
+      </div>`;
+
+      return await sendMail(seller.email, 'Your Seller Account is Now Active - Mache Global', html);
+    } catch (err) {
+      console.error('Error sending seller verification email:', err);
+      throw new Error('Could not send seller verification email');
+    }
+  },
+
   orderDelivered: async ({ email, orderId }) => {
     try {
       const html = `
-      <div style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
-        <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 10px; padding: 30px; border: 1px solid #ddd;">
-          <h2 style="color: #127300;">Your Order Has Been Delivered</h2>
-          <p>Hello,</p>
-          <p>Your order with Order ID: <strong>${orderId}</strong> has been successfully delivered.</p>
-
-          <div style="background-color: #e9f8ec; padding: 15px; border-left: 4px solid #127300; border-radius: 5px;">
-            <p><strong>Need Help?</strong></p>
-            <ul>
-              <li>If you find any issue with your order, please email us within <strong>24 hours</strong>.</li>
-              <li>Attach any relevant photos or videos to speed up the resolution.</li>
-              <li><strong>Note:</strong> We do not accept returns for perishable items.</li>
-            </ul>
+      <div style="font-family: Arial, sans-serif; background-color: #f8f8f8; padding: 20px;">
+        <div style="max-width: 600px; margin: auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <div style="background-color: #FF7000; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Mache Global</h1>
           </div>
+          
+          <div style="padding: 30px;">
+            <h2 style="color: #333; margin-top: 0; text-align: center;">Your Order Has Been Delivered</h2>
+            <p style="color: #555; line-height: 1.6;">Hello,</p>
+            <p style="color: #555; line-height: 1.6;">Your order with Order ID: <strong>${orderId}</strong> has been successfully delivered.</p>
 
-          <p style="margin-top: 25px;">Thank you for shopping with us!</p>
-          <p><strong style="color: #127300;">Jasz & Co Team</strong></p>
+            <div style="background-color: #fff8e1; padding: 15px; border-left: 4px solid #FFC107; border-radius: 4px; margin: 20px 0;">
+              <p style="color: #333; font-weight: bold; margin-top: 0;">Need Help?</p>
+              <ul style="color: #666; padding-left: 20px; margin-bottom: 0;">
+                <li>If you find any issue with your order, please email us within <strong>24 hours</strong>.</li>
+                <li>Attach any relevant photos or videos to speed up the resolution.</li>
+                <li><strong>Note:</strong> We do not accept returns for perishable items.</li>
+              </ul>
+            </div>
+
+            <p style="color: #555; line-height: 1.6; margin-top: 25px;">Thank you for shopping with us!</p>
+            <p style="color: #555; line-height: 1.6;"><strong style="color: #FF7000;">Mache Global Team</strong></p>
+          </div>
+          
+          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #eee;">
+            <p style="margin: 5px 0;">© ${new Date().getFullYear()} Mache Global. All rights reserved.</p>
+          </div>
         </div>
       </div>`;
 

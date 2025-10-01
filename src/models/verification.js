@@ -3,14 +3,23 @@ const mongoose = require('mongoose');
 
 const verificationSchema = new mongoose.Schema(
   {
+    email: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true
+    },
     user: {
-      type: String
+      type: String,
+      required: true
     },
     expiration_at: {
-      type: Date
+      type: Date,
+      required: true
     },
     otp: {
-      type: String
+      type: String,
+      required: true
     },
     verified: {
       type: Boolean,

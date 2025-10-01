@@ -4,20 +4,41 @@ const mongoose = require('mongoose');
 const categorySchema = new mongoose.Schema(
   {
     name: {
-      type: String
+      type: String,
+      required: true
     },
     slug: {
       type: String
     },
+    image: {
+      public_id: {
+        type: String,
+      },
+      url: {
+        type: String,
+      },
+    },
     Attribute: [],
     Subcategory: [
       {
-        name: { type: String },
+        name: { 
+          type: String, 
+          required: true 
+        },
+        image: {
+          public_id: {
+            type: String,
+          },
+          url: {
+            type: String,
+          },
+        },
         Attribute: []
       }
     ],
     notAvailableSubCategory: {
-      type: Boolean
+      type: Boolean,
+      default: false
     }
   },
   {

@@ -99,15 +99,34 @@ module.exports = {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
+      // For sellers, we'll include the user data in the response regardless of status
+      // This allows the frontend to handle the navigation appropriately
       if (user.role === 'Seller') {
-        if (user.status === 'pending') {
-          return res.status(403).json({
-            message: 'Please wait until your account is verified by admin.'
-          });
-        }
         if (user.status === 'suspend') {
           return res.status(403).json({
             message: 'Your account has been suspended. Contact support.'
+          });
+        }
+        
+        // For pending sellers, include the user data in the response
+        // so the frontend can still navigate to the SellerStore
+        if (user.status === 'pending') {
+          const token = jwt.sign(
+            { id: user._id, email: user.email, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: process.env.JWT_EXPIRES_IN }
+          );
+          
+          // Remove password from the user object
+          const userData = user.toObject();
+          delete userData.password;
+          
+          return res.json({
+            success: true,
+            message: 'Please wait until your account is verified by admin.',
+            token,
+            user: userData,
+            status: 'pending'
           });
         }
       }
@@ -162,32 +181,58 @@ module.exports = {
 
   sendOTP: async (req, res) => {
     try {
+      console.log('sendOTP request received:', req.body);
       const { email, firstName, lastName } = req.body;
+
+      if (!email || !firstName || !lastName) {
+        console.error('Missing required fields in request');
+        return response.badReq(res, { 
+          message: 'Email, first name, and last name are required.' 
+        });
+      }
 
       const user = await User.findOne({ email });
 
       if (!user) {
-        return response.badReq(res, { message: 'Email does not exist.' });
+        console.error('User not found for email:', email);
+        return response.badReq(res, { 
+          message: 'Email does not exist.' 
+        });
       }
 
-      const fullNameFromRequest = `${firstName} ${lastName}`
-        .trim()
-        .toLowerCase();
+      const fullNameFromRequest = `${firstName} ${lastName}`.trim().toLowerCase();
       const fullNameFromDB = user.name?.trim().toLowerCase();
-      console.log('fullNameFromRequest', fullNameFromRequest);
-      console.log('fullNameFromDB', fullNameFromDB);
+      
+      console.log('Name validation:', {
+        fullNameFromRequest,
+        fullNameFromDB,
+        user: user.name
+      });
+      
       if (fullNameFromRequest !== fullNameFromDB) {
+        console.error('Name mismatch:', { fullNameFromRequest, fullNameFromDB });
         return response.badReq(res, {
           message: 'Name and email do not match our records.'
         });
       }
 
-      let ran_otp = Math.floor(1000 + Math.random() * 9000);
+      const ran_otp = Math.floor(1000 + Math.random() * 9000);
+      console.log('Generated OTP:', ran_otp, 'for email:', email);
 
-      await mailNotification.sendOTPmail({
-        code: ran_otp,
-        email: email
-      });
+      try {
+        console.log('Attempting to send OTP email to:', email);
+        await mailNotification.sendOTPmail({
+          code: ran_otp,
+          email: email
+        });
+        console.log('OTP email sent successfully to:', email);
+      } catch (emailError) {
+        console.error('Error sending OTP email:', emailError);
+        return response.error(res, {
+          message: 'Failed to send OTP. Please try again.',
+          error: emailError.message
+        });
+      }
 
       const ver = new Verification({
         email: email,
@@ -196,40 +241,141 @@ module.exports = {
         expiration_at: userHelper.getDatewithAddedMinutes(5)
       });
 
-      await ver.save();
-      const token = await userHelper.encode(ver._id);
+      try {
+        await ver.save();
+        console.log('OTP saved to database for email:', email);
+      } catch (dbError) {
+        console.error('Error saving OTP to database:', dbError);
+        return response.error(res, {
+          message: 'Error processing your request. Please try again.',
+          error: dbError.message
+        });
+      }
 
-      return response.ok(res, { message: 'OTP sent.', token });
+      const token = await userHelper.encode(ver._id);
+      console.log('OTP process completed successfully for email:', email);
+      
+      return response.ok(res, { 
+        message: 'OTP sent successfully.',
+        token,
+        // For development/testing only - remove in production
+        debug: { otp: ran_otp }
+      });
     } catch (error) {
-      return response.error(res, error);
+      console.error('Unexpected error in sendOTP:', error);
+      return response.error(res, {
+        message: 'An unexpected error occurred. Please try again.',
+        error: error.message
+      });
     }
   },
 
   verifyOTP: async (req, res) => {
     try {
-      const otp = req.body.otp;
-      const token = req.body.token;
-      if (!(otp && token)) {
-        return response.badReq(res, { message: 'OTP and token required.' });
+      const { otp, token } = req.body;
+      
+      if (!otp || !token) {
+        console.log('Missing OTP or token:', { otp: !!otp, token: !!token });
+        return response.badReq(res, { 
+          success: false,
+          message: 'OTP and token are required.' 
+        });
       }
-      let verId = await userHelper.decode(token);
-      let ver = await Verification.findById(verId);
-      if (
-        otp == ver.otp &&
-        !ver.verified &&
-        new Date().getTime() < new Date(ver.expiration_at).getTime()
-      ) {
-        let token = await userHelper.encode(
-          ver._id + ':' + userHelper.getDatewithAddedMinutes(5).getTime()
-        );
+      
+      try {
+        // Decode the token to get the verification ID
+        const verId = await userHelper.decode(token);
+        console.log('Decoded verification ID:', verId);
+        
+        // Find the verification record and ensure it has the required fields
+        const ver = await Verification.findById(verId);
+        
+        if (!ver) {
+          console.log('Verification record not found for ID:', verId);
+          return response.badReq(res, { 
+            success: false,
+            message: 'Invalid or expired verification. Please request a new OTP.' 
+          });
+        }
+        
+        // Log the complete verification record for debugging
+        console.log('Verification record details:', {
+          id: ver._id,
+          email: ver.email,
+          user: ver.user,
+          verified: ver.verified,
+          expiresAt: ver.expiration_at,
+          currentTime: new Date()
+        });
+        
+        // Ensure the verification record has the required fields
+        if (!ver.email) {
+          console.error('Verification record is missing email:', ver);
+          return response.badReq(res, { 
+            success: false,
+            message: 'Invalid verification record (missing email). Please request a new OTP.'
+          });
+        }
+        
+        console.log('Verification record found:', {
+          storedOTP: ver.otp,
+          receivedOTP: otp,
+          isVerified: ver.verified,
+          expiresAt: ver.expiration_at,
+          currentTime: new Date(),
+          isExpired: new Date() > new Date(ver.expiration_at)
+        });
+        
+        // Check if OTP is valid and not expired
+        if (ver.otp !== otp) {
+          console.log('OTP mismatch');
+          return response.badReq(res, { 
+            success: false,
+            message: 'Invalid OTP. Please check and try again.' 
+          });
+        }
+        
+        if (ver.verified) {
+          console.log('OTP already used');
+          return response.badReq(res, { 
+            success: false,
+            message: 'This OTP has already been used. Please request a new one.' 
+          });
+        }
+        
+        if (new Date() > new Date(ver.expiration_at)) {
+          console.log('OTP expired');
+          return response.badReq(res, { 
+            success: false,
+            message: 'OTP has expired. Please request a new one.' 
+          });
+        }
+        
+        // Mark OTP as verified
         ver.verified = true;
         await ver.save();
-        return response.ok(res, { message: 'OTP verified', token });
-      } else {
-        return response.notFound(res, { message: 'Invalid OTP' });
+        
+        // Generate a new encoded token for the verification ID
+        const newToken = await userHelper.encode(ver._id.toString());
+        console.log('OTP verified successfully');
+        return response.ok(res, { 
+          success: true,
+          message: 'OTP verified successfully',
+          token: newToken // Return the encoded verification ID
+        }); 
+      } catch (decodeError) {
+        console.error('Error decoding token or verifying OTP:', decodeError);
+        return response.badReq(res, { 
+          success: false,
+          message: 'Invalid verification token. Please request a new OTP.'
+        });
       }
     } catch (error) {
-      return response.error(res, error);
+      console.error('Unexpected error in verifyOTP:', error);
+      return response.error(res, { 
+        success: false,
+        message: 'An error occurred while verifying OTP. Please try again.' 
+      });
     }
   },
 
@@ -348,36 +494,89 @@ module.exports = {
       // Check if user exists
       const user = await User.findOne({ email });
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'No user found with this email'
+        // Don't reveal that the email doesn't exist for security reasons
+        console.log(`Password reset attempt for non-existent email: ${email}`);
+        return res.status(200).json({
+          success: true,
+          message: 'If an account exists with this email, an OTP has been sent',
+          data: { email }
         });
       }
 
-      // Generate a simple 4-digit OTP (0000 for now)
-      const otp = '0000';
+      // Generate a secure 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
       const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // OTP valid for 10 minutes
 
-      // Save OTP to user document
-      user.resetPasswordToken = otp;
-      user.resetPasswordExpires = otpExpiry;
-      await user.save();
+      try {
+        // Send OTP via email
+        await mailNotification.sendOTPmail({
+          email: user.email,
+          code: otp,
+          name: user.name || 'User'
+        });
+        
+        console.log(`OTP sent to ${email}`);
+      } catch (emailError) {
+        console.error('Failed to send OTP email:', emailError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to send OTP. Please try again.'
+        });
+      }
 
-      // In a real app, you would send this OTP via email using nodemailer
-      console.log(`OTP for ${email}: ${otp}`);
+      // First, delete any existing verification records for this email
+      await Verification.deleteMany({ email: user.email });
+      
+      // Create a new verification record with all required fields
+      const ver = new Verification({
+        email: user.email, // Ensure email is included
+        user: user._id,
+        otp: otp,
+        verified: false,
+        expiration_at: userHelper.getDatewithAddedMinutes(10) // 10 minutes expiry
+      });
+      
+      // Log the verification record before saving
+      console.log('Creating verification record:', {
+        email: ver.email,
+        user: ver.user,
+        otp: ver.otp,
+        verified: ver.verified,
+        expiresAt: ver.expiration_at
+      });
+      
+      // Save the verification record
+      await ver.save();
+      
+      // Log the saved verification record
+      console.log('Verification record saved:', {
+        id: ver._id,
+        email: ver.email,
+        user: ver.user,
+        verified: ver.verified
+      });
+      
+      // Generate a token for OTP verification
+      const token = await userHelper.encode(ver._id.toString());
+      console.log('Generated verification token:', token);
 
-      res.status(200).json({
+      return res.status(200).json({
         success: true,
-        message: 'OTP sent to your email',
-        data: { email }
+        message: 'OTP has been sent to your email',
+        data: { 
+          email,
+          token, // Include the token in the response
+          // For development/testing only - remove in production
+          ...(process.env.NODE_ENV !== 'production' ? { otp } : {})
+        }
       });
 
     } catch (error) {
       console.error('Forgot password error:', error);
       res.status(500).json({
         success: false,
-        message: 'Server error',
-        error: error.message
+        message: 'An error occurred while processing your request',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
@@ -385,49 +584,144 @@ module.exports = {
   // Verify OTP and Reset Password
   resetPassword: async (req, res) => {
     try {
-      const { email, otp, newPassword } = req.body;
+      const { otp, newPassword, token } = req.body;
+      console.log('Reset password request received:', { otp, newPassword: !!newPassword, hasToken: !!token });
 
-      if (!email || !otp || !newPassword) {
+      if (!otp || !newPassword || !token) {
         return res.status(400).json({
           success: false,
-          message: 'Email, OTP and new password are required'
+          message: 'OTP, new password, and verification token are required'
         });
       }
 
-      // Find user by email
-      const user = await User.findOne({ 
-        email,
-        resetPasswordToken: otp,
-        resetPasswordExpires: { $gt: Date.now() }
-      });
-
-      if (!user) {
+      // Decode the token to get the verification ID
+      let verificationId;
+      try {
+        verificationId = await userHelper.decode(token);
+        console.log('Decoded verification ID:', verificationId);
+      } catch (error) {
+        console.error('Error decoding token:', error);
         return res.status(400).json({
           success: false,
-          message: 'Invalid or expired OTP'
+          message: 'Invalid verification token. Please request a new OTP.'
         });
       }
-
-      // Hash new password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
       
-      // Update user's password and clear reset token
-      user.password = hashedPassword;
-      user.resetPasswordToken = undefined;
-      user.resetPasswordExpires = undefined;
-      await user.save();
+      // Find the verification record
+      const verification = await Verification.findById(verificationId);
+      
+      if (!verification) {
+        console.log('Verification record not found for ID:', verificationId);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired verification. Please request a new OTP.'
+        });
+      }
 
-      res.status(200).json({
-        success: true,
-        message: 'Password reset successful'
+      // Log the verification record to debug
+      console.log('Verification record:', {
+        id: verification._id,
+        email: verification.email,
+        userId: verification.user,
+        verified: verification.verified,
+        expiresAt: verification.expiration_at
       });
+      
+      // Try to find user by user ID first, then fall back to email
+      let user = null;
+      
+      if (verification.user) {
+        user = await User.findById(verification.user);
+        if (user) {
+          console.log('Found user by ID:', user.email);
+        }
+      }
+      
+      // If user not found by ID, try by email
+      if (!user && verification.email) {
+        user = await User.findOne({ email: verification.email });
+        if (user) {
+          console.log('Found user by email:', user.email);
+        }
+      }
+      
+      if (!user) {
+        console.log('User not found for verification record:', {
+          userId: verification.user,
+          email: verification.email
+        });
+        return res.status(400).json({
+          success: false,
+          message: 'User not found. Please try the password reset process again.'
+        });
+      }
+
+      console.log('Verification record found:', {
+        storedOTP: verification.otp,
+        receivedOTP: otp,
+        isVerified: verification.verified,
+        expiresAt: verification.expiration_at,
+        currentTime: new Date(),
+        isExpired: new Date() > new Date(verification.expiration_at)
+      });
+
+      // Verify OTP
+      if (verification.otp !== otp) {
+        console.log('OTP mismatch');
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP. Please try again.'
+        });
+      }
+
+      // Check if OTP is verified
+      if (!verification.verified) {
+        console.log('OTP not verified');
+        return res.status(400).json({
+          success: false,
+          message: 'Please verify the OTP first before resetting the password.'
+        });
+      }
+
+      // Check if OTP is expired
+      if (new Date() > new Date(verification.expiration_at)) {
+        console.log('OTP expired');
+        return res.status(400).json({
+          success: false,
+          message: 'OTP has expired. Please request a new one.'
+        });
+      }
+
+      try {
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        // Update user's password and clear reset token
+        user.password = hashedPassword;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpires = undefined;
+        
+        await user.save();
+        
+        // Delete the verification record
+        await Verification.findByIdAndDelete(verification._id);
+        
+        console.log('Password reset successful for user:', verification.email);
+        return res.status(200).json({
+          success: true,
+          message: 'Password has been reset successfully. You can now login with your new password.'
+        });
+      } catch (error) {
+        console.error('Error saving new password:', error);
+        throw new Error('Failed to update password');
+      }
 
     } catch (error) {
       console.error('Reset password error:', error);
       res.status(500).json({
         success: false,
-        message: 'Server error',
-        error: error.message
+        message: 'An error occurred while resetting your password. Please try again.',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }

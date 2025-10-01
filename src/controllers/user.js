@@ -2,6 +2,8 @@ const User = require('@models/User');
 const response = require('../../responses');
 const Review = require('@models/Review');
 const SellerWallet = require('../models/SellerWallet');
+const SellerStore = require('../models/SellerStore');
+const mailNotification = require('../services/mailNotification');
 module.exports = {
   giverate: async (req, res) => {
     console.log(req.body);
@@ -143,34 +145,98 @@ module.exports = {
   updateStatus: async (req, res) => {
     try {
       const { Status, SellerId } = req.body;
-      console.log('seller', SellerId, Status);
-      let seller = await User.findByIdAndUpdate(
-        { _id: SellerId },
-        { status: Status },
-        { new: true }
-      );
-      console.log('seller', seller);
-      if (!seller) {
-        return response.error(res, 'Seller not found');
+      
+      if (!SellerId) {
+        return response.error(res, 'Seller ID is required');
       }
-
-      if (seller.role === 'Seller' && Status.toLowerCase() === 'verified') {
+      
+      if (!Status) {
+        return response.error(res, 'Status is required');
+      }
+      
+      console.log('Updating seller status:', { SellerId, Status });
+      
+      // First, check if the seller exists in SellerStore
+      const sellerStore = await SellerStore.findById(SellerId);
+      
+      if (!sellerStore) {
+        console.log(`No seller store found with ID: ${SellerId}`);
+        return response.error(res, {
+          success: false,
+          message: 'The seller store was not found.',
+          error: 'STORE_NOT_FOUND',
+          code: 'STORE_NOT_FOUND'
+        });
+      }
+      
+      // Now check if the user exists
+      let user = await User.findById(sellerStore.userId);
+      
+      if (!user) {
+        console.log(`No user found for seller store ID: ${SellerId}`);
+        return response.error(res, {
+          success: false,
+          message: 'The seller account was not found. The store exists but the user account is missing.',
+          error: 'USER_NOT_FOUND',
+          code: 'USER_NOT_FOUND'
+        });
+      }
+      
+      // Update the user status
+      user.status = Status; // 'verified' for user
+      await user.save();
+      
+      console.log('Updated user status:', { userId: user._id, status: Status });
+      
+      // Update the seller store status - use 'approved' instead of 'verified'
+      const storeStatus = Status === 'verified' ? 'approved' : Status;
+      sellerStore.status = storeStatus;
+      await sellerStore.save();
+      
+      console.log('Updated seller store status:', { 
+        storeId: sellerStore._id, 
+        status: storeStatus 
+      });
+      
+      // If status is verified, create a wallet if it doesn't exist
+      if (Status.toLowerCase() === 'verified') {
         const existingWallet = await SellerWallet.findOne({
-          sellerId: seller._id
+          sellerId: user._id
         });
 
         if (!existingWallet) {
           await SellerWallet.create({
-            sellerId: seller._id,
+            sellerId: user._id,
             balance: 0,
             transactions: []
           });
         }
+
+        // Send verification email
+        try {
+          await mailNotification.sellerVerified({
+            name: user.name,
+            email: user.email
+          });
+          console.log('Verification email sent to:', user.email);
+        } catch (emailError) {
+          console.error('Error sending verification email:', emailError);
+          // Don't fail the request if email sending fails
+        }
       }
 
-      return response.ok(res, seller);
+      return response.ok(res, { 
+        success: true, 
+        message: 'Seller status updated successfully',
+        data: user
+      });
     } catch (error) {
-      return response.error(res, error);
+      console.error('Error in updateStatus:', error);
+      return response.error(res, {
+        success: false,
+        message: error.message || 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   }
 };

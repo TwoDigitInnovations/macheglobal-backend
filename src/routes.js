@@ -1,13 +1,15 @@
-const authRoutes = require('../src/routes/authRoutes');
-const userRoutes = require('../src/routes/userRoutes');
-const ProductRoutes = require('../src/routes/productRoutes');
-const CategoryRoutes = require('../src/routes/categoryRoutes');
-const SaleRoutes = require('../src/routes/saleRoutes');
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const saleRoutes = require('./routes/saleRoutes');
+const sellerRoutes = require('./routes/sellerRoutes');
 
 module.exports = (app) => {
-  app.use('/auth', authRoutes);
-  app.use('/user', userRoutes);
-  app.use('/product', ProductRoutes);
-  app.use('/category', CategoryRoutes);
-  app.use('/sale', SaleRoutes);
+  app.use('/api/auth', authRoutes);
+  app.use('/api/user', userRoutes);
+  app.use('/api/product', productRoutes);
+  app.use('/api/category', categoryRoutes);
+  app.use('/api/sale', saleRoutes);
+  app.use('/api/seller', sellerRoutes);
 };
