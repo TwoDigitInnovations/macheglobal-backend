@@ -4,7 +4,7 @@ const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: 'Macheglobal2026@gmail.com',
-    pass: 'czygnhtdtahujirh' // Replace with the 16-char app password from Google
+    pass: 'czygnhtdtahujirh' 
   }
 });
 
@@ -44,7 +44,7 @@ const sendMail = async (to, subject, html) => {
         });
         return reject(error);
       }
-      
+      // 
       console.log('Email sent successfully:', {
         messageId: info.messageId,
         to,
