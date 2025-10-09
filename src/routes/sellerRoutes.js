@@ -11,7 +11,8 @@ const {
   updateSellerStore,
   deleteSellerStore,
   getAllSellerStores,
-  updateStoreStatus
+  updateStoreStatus,
+  getActiveSellers
 } = require('../controllers/sellerController');
 
 // Configure multer to use memory storage for Cloudinary uploads
@@ -47,9 +48,13 @@ const validateStore = [
   body('pincode').trim().notEmpty().withMessage('Pincode is required')
 ];
 
-// Routes
-// Apply authentication middleware to all routes
+// Public routes
+router.get('/active', getActiveSellers);
+
+// Apply authentication middleware to all other routes
 router.use(authenticate);
+
+// Protected routes
 
 router.route('/')
   .post(

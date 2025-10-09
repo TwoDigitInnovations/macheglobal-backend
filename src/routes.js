@@ -7,6 +7,7 @@ const sellerRoutes = require('./routes/sellerRoutes');
 const addressRoutes = require('./routes/addressRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
+const walletRoutes = require('./routes/walletRoutes');
 
 module.exports = (app) => {
   app.use('/api/auth', authRoutes);
@@ -17,5 +18,6 @@ module.exports = (app) => {
   app.use('/api/seller', sellerRoutes);
   app.use('/api/addresses', addressRoutes);
   app.use('/api/reviews', reviewRoutes);
+  app.use('/api/wallet', walletRoutes);
   app.use(orderRoutes);
 };

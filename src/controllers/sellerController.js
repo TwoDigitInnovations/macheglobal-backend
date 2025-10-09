@@ -416,11 +416,36 @@ const updateStoreStatus = async (req, res) => {
   }
 };
 
+// @desc    Get all active sellers
+// @route   GET /api/seller/active
+// @access  Public
+const getActiveSellers = async (req, res) => {
+  try {
+    const sellers = await SellerStore.find({ status: 'approved' })
+      .select('storeName ownerName email phone address city country pincode logo')
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: sellers.length,
+      data: sellers
+    });
+  } catch (error) {
+    console.error('Error fetching active sellers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+};
+
 module.exports = {
   createSellerStore,
   getSellerStore,
   updateSellerStore,
   deleteSellerStore,
   getAllSellerStores,
-  updateStoreStatus
+  updateStoreStatus,
+  getActiveSellers
 };

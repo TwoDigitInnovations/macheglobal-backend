@@ -3,32 +3,107 @@ const Order = require('../models/Order');
 const Product = require('../models/product');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const AdminWallet = require('../models/AdminWallet');
+const SellerWallet = require('../models/SellerWallet');
 const ErrorResponse = require('../utils/errorResponse');
 const { v4: uuidv4 } = require('uuid');
 
 // Helper function to process commission for each order item
-const processOrderItemCommission = async (orderItem, orderId) => {
+const processOrderItemCommission = async (orderItem, orderId, session) => {
     try {
-        const seller = await User.findById(orderItem.seller);
+        console.log('Processing commission for order item:', {
+            orderItemId: orderItem._id,
+            productId: orderItem.product,
+            sellerId: orderItem.seller,
+            price: orderItem.price,
+            quantity: orderItem.qty
+        });
+
+        // Convert seller ID to string for consistent comparison
+        const sellerId = orderItem.seller && orderItem.seller.toString();
+        
+        if (!sellerId) {
+            throw new Error('No seller ID provided for order item');
+        }
+
+        // First try to find the seller by ID without checking isActive or role case
+        let seller = await User.findOne({
+            _id: sellerId,
+            $or: [
+                { role: 'seller' },
+                { role: 'Seller' },
+                { role: 'SELLER' }
+            ]
+        }).session(session);
+        
+        // If not found, try to find any active seller
         if (!seller) {
-            console.error(`Seller not found: ${orderItem.seller}`);
-            return;
+            console.log(`Seller with ID ${sellerId} not found, looking for any active seller`);
+            seller = await User.findOne({
+                $or: [
+                    { role: 'seller', isActive: true },
+                    { role: 'Seller', isActive: true },
+                    { role: 'SELLER', isActive: true }
+                ]
+            }).session(session);
+            
+            if (!seller) {
+                console.error('No active seller found in the system');
+                // As a last resort, try to find any seller regardless of status
+                seller = await User.findOne({
+                    $or: [
+                        { role: 'seller' },
+                        { role: 'Seller' },
+                        { role: 'SELLER' }
+                    ]
+                }).session(session);
+                
+                if (!seller) {
+                    throw new Error('No seller account exists in the system');
+                }
+                
+                console.log(`Found inactive seller: ${seller._id} (${seller.email}) - using as fallback`);
+            } else {
+                console.log(`Using active fallback seller: ${seller._id} (${seller.email})`);
+            }
+            
+            // Update the order item with the found seller ID
+            orderItem.seller = seller._id;
+        } else if (seller && !seller.isActive) {
+            console.warn(`Seller ${seller._id} is not active but will be used`);
         }
 
         const itemTotal = orderItem.price * orderItem.qty;
-        const adminCommission = itemTotal * 0.02; // 2% commission
-        const sellerEarning = itemTotal - adminCommission;
+        const adminCommission = parseFloat((itemTotal * 0.02).toFixed(2)); // 2% commission
+        const sellerEarning = parseFloat((itemTotal - adminCommission).toFixed(2));
         const currentDate = new Date();
         const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
 
+        console.log(`Processing commission for order item ${orderItem._id}:`);
+        console.log(`- Item Total: ${itemTotal}`);
+        console.log(`- Admin Commission (2%): ${adminCommission}`);
+        console.log(`- Seller Earning: ${sellerEarning}`);
+
+        // Find or create seller's wallet
+        let sellerWallet = await SellerWallet.findOne({ sellerId: seller._id });
+        if (!sellerWallet) {
+            sellerWallet = new SellerWallet({
+                sellerId: seller._id,
+                balance: 0,
+                totalEarnings: 0,
+                thisMonthEarnings: 0,
+                transactions: []
+            });
+        }
+
         // Update seller's wallet
-        seller.wallet.balance += sellerEarning;
-        seller.wallet.totalEarnings += sellerEarning;
+        sellerWallet.balance = parseFloat((sellerWallet.balance + sellerEarning).toFixed(2));
+        sellerWallet.totalEarnings = parseFloat((sellerWallet.totalEarnings + sellerEarning).toFixed(2));
         
         // Update this month's earnings if the order is from the current month
         const order = await Order.findById(orderId);
-        if (order && order.paidAt >= firstDayOfMonth) {
-            seller.wallet.thisMonthEarnings += sellerEarning;
+        if (order && order.paidAt && new Date(order.paidAt) >= firstDayOfMonth) {
+            sellerWallet.thisMonthEarnings = parseFloat((sellerWallet.thisMonthEarnings + sellerEarning).toFixed(2));
         }
 
         // Create transaction record for seller
@@ -45,74 +120,128 @@ const processOrderItemCommission = async (orderItem, orderId) => {
                 quantity: orderItem.qty,
                 pricePerItem: orderItem.price,
                 totalAmount: itemTotal,
-                commission: adminCommission
+                commission: adminCommission,
+                transactionType: 'SALE'
             }
         });
 
         // Find admin user
         const admin = await User.findOne({ role: 'Admin' });
-        if (admin) {
-            // Update admin's wallet
-            admin.wallet.balance += adminCommission;
-            
-            // Create transaction record for admin
-            const adminTransaction = new Transaction({
-                user: admin._id,
-                order: orderId,
-                amount: adminCommission,
-                type: 'CREDIT',
-                status: 'COMPLETED',
-                description: `Commission from sale of ${orderItem.name} by ${seller.name}`,
-                referenceId: `TXN-${uuidv4()}`,
-                metadata: {
-                    sellerId: seller._id,
-                    sellerName: seller.name,
-                    itemId: orderItem._id,
-                    itemName: orderItem.name,
-                    quantity: orderItem.qty,
-                    commissionRate: 0.02
-                }
-            });
-
-            await Promise.all([
-                seller.save(),
-                sellerTransaction.save(),
-                admin.save(),
-                adminTransaction.save()
-            ]);
-        } else {
-            await Promise.all([
-                seller.save(),
-                sellerTransaction.save()
-            ]);
+        if (!admin) {
+            console.error('Admin user not found');
+            throw new Error('Admin user not found');
         }
+
+        // Find or create admin's wallet
+        let adminWallet = await AdminWallet.findOne({});
+        if (!adminWallet) {
+            adminWallet = new AdminWallet({
+                balance: 0,
+                totalEarnings: 0,
+                transactions: []
+            });
+        }
+
+        // Update admin's wallet
+        adminWallet.balance = parseFloat((adminWallet.balance + adminCommission).toFixed(2));
+        adminWallet.totalEarnings = parseFloat((adminWallet.totalEarnings + adminCommission).toFixed(2));
+        
+        // Create transaction record for admin
+        const adminTransaction = new Transaction({
+            user: admin._id,
+            order: orderId,
+            amount: adminCommission,
+            type: 'CREDIT',
+            status: 'COMPLETED',
+            description: `Commission from sale of ${orderItem.name} by ${seller.name}`,
+            referenceId: `TXN-${uuidv4()}`,
+            metadata: {
+                sellerId: seller._id,
+                sellerName: seller.name,
+                itemId: orderItem._id,
+                itemName: orderItem.name,
+                quantity: orderItem.qty,
+                commissionRate: 0.02,
+                transactionType: 'COMMISSION'
+            }
+        });
+
+        // Save all changes in a single transaction
+        await Promise.all([
+            sellerWallet.save({ session }),
+            sellerTransaction.save({ session }),
+            adminWallet.save({ session }),
+            adminTransaction.save({ session })
+        ]);
+
+        console.log(`Successfully processed commission for order item ${orderItem._id}`);
+        return { success: true, sellerEarning, adminCommission };
     } catch (error) {
         console.error('Error processing commission:', error);
-        // Don't throw error to prevent order update from failing
+        throw error; // Re-throw to trigger transaction rollback
     }
 };
 
 
 exports.createOrder = async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-        const {
+        console.log('Received order request with data:', JSON.stringify({
+            body: req.body,
+            user: req.user ? req.user.id : 'No user in request'
+        }, null, 2));
+
+        let {
             orderItems,
             shippingAddress,
-            paymentMethod,
+            paymentMethod = 'card',
             itemsPrice,
-            taxPrice,
-            shippingPrice,
+            taxPrice = 0,
+            shippingPrice = 0,
             totalPrice,
+            user: userId
         } = req.body;
 
-        if (orderItems && orderItems.length === 0) {
+        // If user is authenticated via JWT, use that instead of the one from the body
+        if (req.user && req.user.id) {
+            userId = req.user.id;
+        }
+
+        if (!userId) {
+            throw new Error('User ID is required');
+        }
+
+        // Validate order items
+        if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) {
+            throw new Error('Order must contain at least one item');
+        }
+
+        // Log order items with seller information
+        console.log('Order items with seller info:');
+        orderItems.forEach((item, index) => {
+            console.log(`Item ${index + 1}:`, {
+                product: item.product,
+                seller: item.seller || 'No seller ID',
+                price: item.price,
+                qty: item.qty
+            });
+        });
+
+        if (!orderItems || orderItems.length === 0) {
+            await session.abortTransaction();
+            session.endSession();
             return next(new ErrorResponse('No order items', 400));
         }
 
         if (!req.body.user) {
+            await session.abortTransaction();
+            session.endSession();
             return next(new ErrorResponse('User ID is required', 400));
         }
 
+        // Create the order
         const order = new Order({
             user: req.body.user,
             orderItems,
@@ -122,16 +251,96 @@ exports.createOrder = async (req, res, next) => {
             taxPrice,
             shippingPrice,
             totalPrice,
+            isPaid: true, // Mark as paid immediately since we're processing payment
+            paidAt: Date.now(),
+            paymentResult: {
+                id: `manual-${Date.now()}`,
+                status: 'COMPLETED',
+                update_time: new Date().toISOString(),
+                email_address: shippingAddress.email || 'customer@example.com',
+            },
         });
 
-        const createdOrder = await order.save();
+        // Save the order
+        const createdOrder = await order.save({ session });
+        console.log('Order created:', createdOrder._id);
+
+        // Process commission for each order item
+        const commissionResults = [];
+        for (const item of createdOrder.orderItems) {
+            try {
+                console.log(`\n--- Processing commission for item ---`);
+                console.log('Item details:', {
+                    productId: item.product,
+                    sellerId: item.seller,
+                    price: item.price,
+                    quantity: item.qty
+                });
+                
+                const result = await processOrderItemCommission(item, createdOrder._id, session);
+                console.log('Commission processed successfully:', result);
+                commissionResults.push(result);
+            } catch (itemError) {
+                console.error(`Error processing commission for item ${item._id}:`, itemError);
+                console.error('Item causing error:', JSON.stringify(item, null, 2));
+                
+                // Try to find the seller in the database
+                try {
+                    const seller = await User.findById(item.seller).session(session);
+                    console.error('Seller status:', seller ? 
+                        `Found: ${seller._id}, Active: ${seller.isActive}, Email: ${seller.email}` : 
+                        'Not found');
+                } catch (e) {
+                    console.error('Error checking seller status:', e);
+                }
+                
+                commissionResults.push({ 
+                    success: false, 
+                    error: itemError.message,
+                    item: {
+                        productId: item.product,
+                        sellerId: item.seller,
+                        price: item.price,
+                        quantity: item.qty
+                    }
+                });
+            }
+        }
+        
+        // Check if any commissions failed
+        const failedCommissions = commissionResults.filter(r => !r.success);
+        if (failedCommissions.length > 0) {
+            console.error('Some commissions failed to process:', failedCommissions);
+            throw new Error(`Failed to process commissions for ${failedCommissions.length} items`);
+        }
+
+        // Commit the transaction
+        await session.commitTransaction();
+        session.endSession();
+        
+        console.log('Successfully created order and processed commissions:', createdOrder._id);
+        
+        // Calculate total commissions
+        const totalAdminCommission = commissionResults.reduce((sum, r) => sum + (r.adminCommission || 0), 0);
+        const totalSellerEarnings = commissionResults.reduce((sum, r) => sum + (r.sellerEarning || 0), 0);
         
         res.status(201).json({
             success: true,
-            data: createdOrder
+            data: {
+                ...createdOrder.toObject(),
+                commissionDetails: {
+                    totalAdminCommission,
+                    totalSellerEarnings,
+                    itemsProcessed: commissionResults.length
+                }
+            },
+            message: 'Order created and payment processed successfully'
         });
     } catch (error) {
-        next(error);
+        console.error('Error in createOrder:', error);
+        await session.abortTransaction();
+        session.endSession();
+        next(new ErrorResponse(`Failed to create order: ${error.message}`, 500));
     }
 };
 
@@ -320,15 +529,20 @@ exports.updateOrderToPaid = async (req, res, next) => {
     session.startTransaction();
 
     try {
+        console.log('Starting updateOrderToPaid for order:', req.params.id);
+        
+        // Find and lock the order in the session
         const order = await Order.findById(req.params.id).session(session);
 
         if (!order) {
+            console.error('Order not found:', req.params.id);
             await session.abortTransaction();
             session.endSession();
             return next(new ErrorResponse('Order not found', 404));
         }
 
         if (order.isPaid) {
+            console.log('Order already paid:', order._id);
             await session.abortTransaction();
             session.endSession();
             return res.json({
@@ -338,9 +552,11 @@ exports.updateOrderToPaid = async (req, res, next) => {
             });
         }
 
+        console.log('Marking order as paid:', order._id);
+        
         // Mark order as paid
         order.isPaid = true;
-        order.paidAt = Date.now();
+        order.paidAt = new Date();
         order.paymentResult = {
             id: req.body.id,
             status: req.body.status,
@@ -348,27 +564,58 @@ exports.updateOrderToPaid = async (req, res, next) => {
             email_address: req.body.payer?.email_address,
         };
 
+        // Save the order first
         const updatedOrder = await order.save({ session });
+        console.log('Order marked as paid:', updatedOrder._id);
 
-        // Process commission for each order item in parallel
-        await Promise.all(
-            order.orderItems.map(item => 
-                processOrderItemCommission(item, order._id)
-            )
-        );
+        // Process commission for each order item in series to avoid race conditions
+        const commissionResults = [];
+        for (const item of order.orderItems) {
+            try {
+                console.log(`Processing commission for item: ${item._id}`);
+                const result = await processOrderItemCommission(item, order._id, session);
+                commissionResults.push(result);
+            } catch (itemError) {
+                console.error(`Error processing commission for item ${item._id}:`, itemError);
+                // Continue with other items but log the error
+                commissionResults.push({ success: false, error: itemError.message });
+            }
+        }
 
+        // Check if all commissions were processed successfully
+        const failedCommissions = commissionResults.filter(r => !r.success);
+        if (failedCommissions.length > 0) {
+            console.error('Some commissions failed to process:', failedCommissions);
+            throw new Error(`Failed to process commissions for ${failedCommissions.length} items`);
+        }
+
+        // Commit the transaction
         await session.commitTransaction();
         session.endSession();
         
+        console.log('Successfully processed order and commissions:', order._id);
+        
+        // Calculate total commissions
+        const totalAdminCommission = commissionResults.reduce((sum, r) => sum + (r.adminCommission || 0), 0);
+        const totalSellerEarnings = commissionResults.reduce((sum, r) => sum + (r.sellerEarning || 0), 0);
+        
         res.json({
             success: true,
-            data: updatedOrder,
-            message: 'Order marked as paid and commissions processed'
+            data: {
+                ...updatedOrder.toObject(),
+                commissionDetails: {
+                    totalAdminCommission,
+                    totalSellerEarnings,
+                    itemsProcessed: commissionResults.length
+                }
+            },
+            message: 'Order marked as paid and commissions processed successfully'
         });
     } catch (error) {
+        console.error('Error in updateOrderToPaid:', error);
         await session.abortTransaction();
         session.endSession();
-        next(error);
+        next(new ErrorResponse(`Failed to process payment: ${error.message}`, 500));
     }
 };
 

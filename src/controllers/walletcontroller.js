@@ -3,6 +3,7 @@ const AdminWallet = require('../models/AdminWallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const WithdrawalRequest = require('../models/withdrawReq');
 const response = require('../../responses');
+const mongoose = require('mongoose')
 
 
 module.exports = {
@@ -158,21 +159,60 @@ module.exports = {
 
   requestWithdrawal: async (req, res) => {
     try {
-      const { sellerId, amount, bankDetails } = req.body;
+      console.log('Withdrawal request received:', req.body);
+      
+      const { sellerId, sellerName, amount, paymentMethod, accountDetails = {} } = req.body;
+      
+      // Validate required fields
+      if (!sellerId || !sellerName || amount === undefined) {
+        console.error('Missing required fields:', { sellerId, sellerName, amount });
+        return response.error(res, 'Missing required fields');
+      }
+      
+      // Validate amount
+      if (isNaN(amount) || amount <= 0) {
+        console.error('Invalid amount:', amount);
+        return response.error(res, 'Invalid amount');
+      }
+      
+      console.log('Looking up seller wallet for ID:', sellerId);
       const sellerWallet = await SellerWallet.findOne({ sellerId });
-      if (!sellerWallet) return response.error(res, 'Seller wallet not found');
-
-      if (sellerWallet.balance < amount) {
-        return response.error(res, 'Insufficient balance');
+      
+      if (!sellerWallet) {
+        console.error('Seller wallet not found for ID:', sellerId);
+        return response.error(res, 'Seller wallet not found');
       }
 
-      const request = await WithdrawalRequest.create({
+      console.log('Current wallet balance:', sellerWallet.balance, 'Requested amount:', amount);
+      if (sellerWallet.balance < amount) {
+        return response.error(res, `Insufficient balance. Available: ${sellerWallet.balance}`);
+      }
+
+      // Prepare withdrawal data
+      const withdrawalData = {
         sellerId,
-        sellerName: sellerWallet?.sellerId?.name,
-        amount,
-        bankDetails,
-        status: 'pending'
-      });
+        sellerName,
+        amount: parseFloat(amount),
+        status: 'pending',
+        bankDetails: {
+          accountNumber: accountDetails.accountNumber || 'N/A',
+          bankName: accountDetails.bankName || 'N/A',
+          ifscCode: accountDetails.ifscCode || 'N/A',
+          accountHolderName: accountDetails.accountHolderName || sellerName
+        }
+      };
+
+      console.log('Creating withdrawal request with data:', withdrawalData);
+      
+      // Create withdrawal request
+      const request = await WithdrawalRequest.create(withdrawalData);
+      
+      // Update seller's wallet balance
+      sellerWallet.balance = parseFloat((sellerWallet.balance - amount).toFixed(2));
+      sellerWallet.pendingWithdrawals = parseFloat(((sellerWallet.pendingWithdrawals || 0) + amount).toFixed(2));
+      await sellerWallet.save();
+      
+      console.log('Withdrawal request created successfully:', request);
 
       return response.ok(res, request);
     } catch (error) {
@@ -203,52 +243,112 @@ module.exports = {
   },
 
   approveWithdrawal: async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
     try {
-      const { withdrawalId, adminId } = req.body;
-      const request = await WithdrawalRequest.findById(withdrawalId);
-      if (!request) return response.error(res, 'Request not found');
+      console.log('approveWithdrawal called with params:', req.params);
+      const { id: withdrawalId } = req.params;
+      
+      // Validate withdrawal ID
+      if (!withdrawalId || !/^[0-9a-fA-F]{24}$/.test(withdrawalId)) {
+        console.error('Invalid withdrawal ID format:', withdrawalId);
+        return response.error(res, 'Invalid withdrawal ID format');
+      }
+      
+      console.log('Finding withdrawal request with ID:', withdrawalId);
+      const request = await WithdrawalRequest.findById(withdrawalId).session(session);
+      if (!request) {
+        console.error('Withdrawal request not found for ID:', withdrawalId);
+        return response.error(res, 'Withdrawal request not found');
+      }
+      
+      console.log('Found withdrawal request:', request);
+      
+      if (request.status !== 'pending') {
+        console.log(`Withdrawal request is already ${request.status}`);
+        return response.error(res, `Withdrawal request is already ${request.status}`);
+      }
 
+      console.log('Finding seller wallet for seller ID:', request.sellerId);
       const sellerWallet = await SellerWallet.findOne({
         sellerId: request.sellerId
-      });
-      const adminWallet = await AdminWallet.findOne({});
+      }).session(session);
+      
+      if (!sellerWallet) {
+        console.error('Seller wallet not found for seller ID:', request.sellerId);
+        return response.error(res, 'Seller wallet not found');
+      }
 
+      console.log('Checking seller balance. Current balance:', sellerWallet.balance, 'Requested amount:', request.amount);
       if (sellerWallet.balance < request.amount) {
         return response.error(res, 'Insufficient seller balance');
       }
 
-      // Debit seller wallet
-      sellerWallet.balance -= request.amount;
-      await sellerWallet.save();
+      try {
+        // 1. Debit seller's wallet
+        console.log('Debiting seller wallet');
+        sellerWallet.balance = parseFloat((sellerWallet.balance - request.amount).toFixed(2));
+        await sellerWallet.save({ session });
 
-      // Debit admin wallet (payout)
-      if (adminWallet.balance < request.amount) {
-        return response.error(res, 'Insufficient admin balance');
+        // 2. Create a transaction record
+        const transaction = new WalletTransaction({
+          walletType: 'Seller',  // Changed from 'seller' to 'Seller' to match enum
+          sellerId: request.sellerId,
+          type: 'debit',
+          amount: request.amount,
+          description: `Withdrawal to bank account (${request.bankDetails.accountNumber})`,
+          status: 'completed',
+          referenceId: withdrawalId,
+          sellerName: request.sellerName
+        });
+        await transaction.save({ session });
+
+        // 3. Update withdrawal request status
+        console.log('Updating withdrawal request status to approved');
+        request.status = 'approved';
+        request.processedAt = new Date();
+        await request.save({ session });
+
+        // 4. Commit the transaction
+        await session.commitTransaction();
+        console.log('Withdrawal approved successfully');
+        
+        return response.ok(res, {
+          message: 'Withdrawal approved successfully',
+          withdrawal: request,
+          newBalance: sellerWallet.balance
+        });
+      } catch (error) {
+        // If anything fails, abort the transaction
+        await session.abortTransaction();
+        console.error('Error during withdrawal approval:', error);
+        throw error;
       }
-      adminWallet.balance -= request.amount;
-      await adminWallet.save();
-
-      request.status = 'approved';
-      request.processedAt = Date.now();
-      request.processedBy = adminId;
-      await request.save();
-
-      return response.ok(res, request);
     } catch (error) {
-      return response.error(res, error);
+      console.error('Error in approveWithdrawal:', error);
+      // Send detailed error to client in development
+      const errorMessage = process.env.NODE_ENV === 'development' 
+        ? error.message 
+        : 'Failed to approve withdrawal';
+      return response.error(res, errorMessage);
     }
   },
 
   rejectWithdrawal: async (req, res) => {
     try {
-      const { withdrawalId, remarks, adminId } = req.body;
+      const { id: withdrawalId } = req.params;
+      const { remarks } = req.body;
       const request = await WithdrawalRequest.findById(withdrawalId);
       if (!request) return response.error(res, 'Request not found');
+      
+      if (request.status !== 'pending') {
+        return response.error(res, `Withdrawal request is already ${request.status}`);
+      }
 
       request.status = 'rejected';
       request.processedAt = Date.now();
-      request.processedBy = adminId;
-      request.remarks = remarks;
+      request.remarks = remarks || 'Rejected by admin';
       await request.save();
 
       return response.ok(res, request);
@@ -265,6 +365,26 @@ module.exports = {
       return response.ok(res, withdrawals);
     } catch (error) {
       return response.error(res, error);
+    }
+  },
+
+  // Get user transactions
+  getUserTransactions: async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const transactions = await WalletTransaction.find({
+        $or: [
+          { sellerId: userId },
+          { adminId: userId }
+        ]
+      })
+        .sort({ createdAt: -1 })
+        .limit(50);
+
+      return response.ok(res, { transactions });
+    } catch (error) {
+      console.error('Error fetching user transactions:', error);
+      return response.error(res, 'Error fetching transactions');
     }
   },
 

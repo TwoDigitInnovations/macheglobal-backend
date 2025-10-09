@@ -1,25 +1,25 @@
 const express = require('express');
 const router = express.Router();
-const { protect, admin, seller } = require('../middleware/authMiddleware');
-const walletController = require('../controllers/walletController');
+const { authenticate } = require('../middlewares/authMiddleware');
+const walletController = require('../controllers/walletcontroller');
 
 // Seller wallet routes
-router.get('/seller/:sellerId', protect, walletController.getSellerWallet);
-router.post('/seller/withdraw', protect, seller, walletController.requestWithdrawal);
-router.get('/seller/withdrawals/:sellerId', protect, walletController.getSellerWithdrawals);
+router.get('/seller/:sellerId', authenticate, walletController.getSellerWallet);
+router.post('/withdraw', authenticate, walletController.requestWithdrawal); // Updated path
+router.get('/seller/withdrawals/:sellerId', authenticate, walletController.getSellerWithdrawals);
 
 // Admin wallet routes
-router.get('/admin/balance', protect, admin, walletController.getAdminWallet);
-router.get('/admin/withdrawals/pending', protect, admin, walletController.getPendingWithdrawals);
-router.put('/admin/withdrawals/:id/approve', protect, admin, walletController.approveWithdrawal);
-router.put('/admin/withdrawals/:id/reject', protect, admin, walletController.rejectWithdrawal);
-router.get('/admin/withdrawals', protect, admin, walletController.getAllWithdrawals);
+router.get('/admin/balance', authenticate, walletController.getAdminWallet);
+router.get('/admin/withdrawals/pending', authenticate, walletController.getPendingWithdrawals);
+router.put('/admin/withdrawals/:id/approve', authenticate, walletController.approveWithdrawal);
+router.put('/admin/withdrawals/:id/reject', authenticate, walletController.rejectWithdrawal);
+router.get('/admin/withdrawals', authenticate, walletController.getAllWithdrawals);
 
 // Transaction history
-router.get('/transactions', protect, walletController.getUserTransactions);
+router.get('/transactions', authenticate, walletController.getUserTransactions);
 
 // Dashboard stats
-router.get('/seller-stats/:sellerId', protect, walletController.getSellerStats);
-router.get('/admin-stats', protect, admin, walletController.getAdminStats);
+router.get('/seller-stats/:sellerId', authenticate, walletController.getSellerStats);
+router.get('/admin-stats', authenticate, walletController.getAdminStats);
 
 module.exports = router;
