@@ -4,6 +4,9 @@ const productRoutes = require('./routes/productRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const saleRoutes = require('./routes/saleRoutes');
 const sellerRoutes = require('./routes/sellerRoutes');
+const addressRoutes = require('./routes/addressRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
 
 module.exports = (app) => {
   app.use('/api/auth', authRoutes);
@@ -12,4 +15,7 @@ module.exports = (app) => {
   app.use('/api/category', categoryRoutes);
   app.use('/api/sale', saleRoutes);
   app.use('/api/seller', sellerRoutes);
+  app.use('/api/addresses', addressRoutes);
+  app.use('/api/reviews', reviewRoutes);
+  app.use(orderRoutes);
 };

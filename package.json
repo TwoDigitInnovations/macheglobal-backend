@@ -45,7 +45,8 @@
     "path": "^0.12.7",
     "prettier": "^3.6.2",
     "stripe": "^18.5.0",
-    "underscore": "^1.13.7"
+    "underscore": "^1.13.7",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "eslint": "^8.57.1",

@@ -4,7 +4,7 @@ const WalletTransaction = require('../models/WalletTransaction');
 const WithdrawalRequest = require('../models/withdrawReq');
 const response = require('../../responses');
 
-// ----------------- SELLER WALLET -----------------
+
 module.exports = {
   getSellerWallet: async (req, res) => {
     try {
@@ -74,7 +74,7 @@ module.exports = {
     }
   },
 
-  // ----------------- ADMIN WALLET -----------------
+ 
 
   getAdminWallet: async (req, res) => {
     try {
@@ -136,7 +136,6 @@ module.exports = {
     }
   },
 
-  // ----------------- TRANSACTIONS -----------------
 
   getAllTransactions: async (req, res) => {
     try {
@@ -155,7 +154,7 @@ module.exports = {
     }
   },
 
-  // ----------------- WITHDRAWALS (SELLER) -----------------
+
 
   requestWithdrawal: async (req, res) => {
     try {
@@ -192,7 +191,7 @@ module.exports = {
     }
   },
 
-  // ----------------- WITHDRAWALS (ADMIN) -----------------
+ 
 
   getPendingWithdrawals: async (req, res) => {
     try {

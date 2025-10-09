@@ -1,7 +1,9 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const productchema = new mongoose.Schema(
+
+
+const productSchema = new mongoose.Schema(
   {
     category: {
       type: mongoose.Schema.Types.ObjectId,
@@ -49,7 +51,6 @@ const productchema = new mongoose.Schema(
     price: {
       type: Number
     },
-
     pieces: {
       type: Number
     },
@@ -71,4 +72,4 @@ const productchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model('Product', productchema);
+module.exports = mongoose.model('Product', productSchema);

@@ -1,16 +1,18 @@
 const mongoose = require('mongoose');
-const Product = require('@models/product');
-const ProductRequest = require('@models/product-request');
-const ContactUs = require('@models/contactUs');
-const User = mongoose.model('User');
-const { DateTime } = require('luxon'); // still can be kept if needed elsewhere
-const Category = require('@models/Category');
-const response = require('./../../responses');
-const Favourite = require('@models/Favorite');
+const { DateTime } = require('luxon');
+
+// Get models using mongoose.model() to avoid recompilation
+const Product = require('../models/product');
+const Category = require('../models/Category');
+const User = require('../models/User');
+const Order = require('../models/Order');
+const Favourite = require('../models/Favorite');
+const Review = require('../models/Review');
+
+const response = require('../../responses');
 const _ = require('lodash');
-const Review = require('@models/Review');
 const { getReview } = require('../helper/user');
-const mailNotification = require('./../services/mailNotification');
+const mailNotification = require('../services/mailNotification');
 
 const cleanAndUnique = (data) => {
   return _.uniq(
@@ -152,21 +154,20 @@ module.exports = {
     }
   },
 
-  getProductById: async (req, res) => {
-    try {
-      const product = await Product.findOne({ _id: req.params.id }).populate(
-        'category Brand'
-      );
-
-      if (!product) {
-        return response.error(res, 'Product not found');
-      }
-
-      return response.ok(res, product);
-    } catch (error) {
-      return response.error(res, error);
+getProductById: async (req, res) => {
+  try {
+    const product = await Product.findOne({ _id: req.params.id })
+      .populate('category Brand SellerId'); // Added SellerId to populate
+     
+    if (!product) {
+      return response.error(res, 'Product not found');
     }
-  },
+     
+    return response.ok(res, product);
+  } catch (error) {
+    return response.error(res, error);
+  }
+},
 
   getProductBycategoryId: async (req, res) => {
     console.log(req.query);
@@ -459,43 +460,173 @@ module.exports = {
 
   getOrderBySeller: async (req, res) => {
     try {
-      const cond = {};
-
-      if (req.body.curentDate) {
-        const date = new Date(req.body.curentDate);
-        const nextDay = new Date(date);
-        nextDay.setDate(date.getDate() + 1);
-        cond.createdAt = { $gte: date, $lte: nextDay };
-      }
-
-      if (req.body.orderId) {
-        const orderId = req.body.orderId.trim();
-        if (orderId.length > 0) {
-          cond.orderId = { $regex: orderId, $options: 'i' };
+      console.log('Request body:', req.body);
+      console.log('Request query:', req.query);
+      console.log('Authenticated user:', req.user);
+      
+      const { curentDate, orderId, sellerId: requestedSellerId } = req.body || {};
+      let page = parseInt(req.query.page) || 1;
+      let limit = parseInt(req.query.limit) || 10;
+      let skip = (page - 1) * limit;
+      
+      // If admin is making the request without a specific sellerId, return all seller orders
+      if (req.user?.role === 'Admin' && !requestedSellerId) {
+        console.log('Admin viewing all seller orders');
+        
+        // Build base query
+        const baseQuery = {};
+        
+        // Add date filter if provided
+        if (curentDate) {
+          const date = new Date(curentDate);
+          const nextDay = new Date(date);
+          nextDay.setDate(date.getDate() + 1);
+          baseQuery.createdAt = { $gte: date, $lte: nextDay };
         }
+        
+        // Add order ID filter if provided
+        if (orderId) {
+          const trimmedOrderId = orderId.trim();
+          if (trimmedOrderId.length > 0) {
+            baseQuery.orderId = { $regex: trimmedOrderId, $options: 'i' };
+          }
+        }
+        
+        // Get all orders with seller information
+        const [orders, totalItems] = await Promise.all([
+          Order.find(baseQuery)
+            .populate('orderItems.product')
+            .populate('user', 'name email phone')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit),
+          Order.countDocuments(baseQuery)
+        ]);
+        
+        return res.status(200).json({
+          status: true,
+          data: orders.map((order, index) => ({
+            ...order.toObject(),
+            indexNo: skip + index + 1
+          })),
+          pagination: {
+            totalItems,
+            totalPages: Math.ceil(totalItems / limit),
+            currentPage: page,
+            itemsPerPage: limit
+          }
+        });
+      }
+      
+      // For sellers or admin viewing a specific seller
+      const sellerId = requestedSellerId || req.user?.id;
+      
+      if (!sellerId) {
+        return res.status(400).json({
+          status: false,
+          message: 'Seller ID is required.'
+        });
+      }
+      
+      console.log('Viewing orders for seller:', sellerId);
+      
+      // Get all product IDs for this seller
+      const sellerProducts = await Product.find({ SellerId: sellerId }, '_id');
+      console.log('Seller products count:', sellerProducts.length);
+      
+      if (!sellerProducts || sellerProducts.length === 0) {
+        return res.status(200).json({
+          status: true,
+          data: [],
+          pagination: {
+            totalItems: 0,
+            totalPages: 0,
+            currentPage: page,
+            itemsPerPage: limit
+          },
+          message: 'No products found for this seller'
+        });
       }
 
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const skip = (page - 1) * limit;
+      const productIds = sellerProducts.map(p => p._id);
+      console.log('Product IDs:', productIds);
+      
+      // Build the query
+      const query = {
+        'orderItems.product': { $in: productIds },
+        status: { $ne: 'cancelled' } // Exclude cancelled orders
+      };
 
-      const products = await ProductRequest.find(cond)
-        .populate('user', '-password -varients')
-        .populate('productDetail.product')
+      // Add date filter if provided
+      if (curentDate) {
+        const startDate = new Date(curentDate);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(curentDate);
+        endDate.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: startDate, $lte: endDate };
+        console.log('Date range:', { startDate, endDate });
+      }
+
+      // Add order ID filter if provided
+      if (orderId && orderId.trim()) {
+        query.orderId = { $regex: orderId.trim(), $options: 'i' };
+        console.log('Order ID filter:', orderId.trim());
+      }
+
+      // Reuse existing page, limit, skip variables
+      console.log('Final query:', JSON.stringify(query, null, 2));
+
+      // First, get the count of matching orders
+      const totalItems = await Order.countDocuments(query);
+      console.log('Total matching orders:', totalItems);
+
+      if (totalItems === 0) {
+        return res.status(200).json({
+          status: true,
+          data: [],
+          pagination: {
+            totalItems: 0,
+            totalPages: 0,
+            currentPage: page,
+            itemsPerPage: limit
+          },
+          message: 'No orders found for the given criteria'
+        });
+      }
+
+      // Get orders with pagination
+      const orders = await Order.find(query)
+        .populate('user', 'name email phone')
+        .populate({
+          path: 'orderItems.product',
+          select: 'name price image description vietnamiesName SellerId',
+          match: { _id: { $in: productIds } }
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .lean();
 
-      const totalItems = await ProductRequest.countDocuments(cond);
+      console.log('Raw orders from DB:', JSON.stringify(orders, null, 2));
+
+      // Filter out orders that don't have any products from this seller
+      const filteredOrders = orders.filter(order => {
+        const hasSellerProducts = order.orderItems.some(item => 
+          item.product && productIds.some(id => id.equals(item.product._id))
+        );
+        if (!hasSellerProducts) {
+          console.log('Filtering out order with no matching products:', order._id);
+        }
+        return hasSellerProducts;
+      });
+
+      console.log('Filtered orders count:', filteredOrders.length);
 
       return res.status(200).json({
         status: true,
-        data: products.map((item, index) => ({
-          ...(item.toObject?.() || item),
-          indexNo: skip + index + 1
-        })),
+        data: filteredOrders,
         pagination: {
-          totalItems,
+          totalItems: filteredOrders.length,
           totalPages: Math.ceil(totalItems / limit),
           currentPage: page,
           itemsPerPage: limit
@@ -573,7 +704,7 @@ module.exports = {
       const sales = await ProductRequest.aggregate([
         {
           $match: {
-            createdAt: { $gte: start, $lt: end } // ✅ Only this year's data
+            createdAt: { $gte: start, $lt: end } 
           }
         },
         {

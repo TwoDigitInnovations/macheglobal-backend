@@ -3,6 +3,9 @@ const { authenticate } = require('@middlewares/authMiddleware');
 const product = require('@controllers/product');
 const router = express.Router();
 
+// Search products
+router.get('/productSearch', product.productSearch);
+
 router.post('/createProduct', product.createProduct);
 router.get('/getProduct', product.getProduct);
 router.post('/updateProduct', product.updateProduct);
