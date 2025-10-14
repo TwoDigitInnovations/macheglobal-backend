@@ -5,14 +5,18 @@ const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const AdminWallet = require('../models/AdminWallet');
 const SellerWallet = require('../models/SellerWallet');
+const WalletTransaction = require('../models/WalletTransaction');
 const ErrorResponse = require('../utils/errorResponse');
 const { v4: uuidv4 } = require('uuid');
 
 // Helper function to process commission for each order item
 const processOrderItemCommission = async (orderItem, orderId, session) => {
     try {
+        // Generate a temporary ID if orderItem._id is not available
+        const itemId = orderItem._id || new mongoose.Types.ObjectId();
+        
         console.log('Processing commission for order item:', {
-            orderItemId: orderItem._id,
+            orderItemId: itemId,
             productId: orderItem.product,
             sellerId: orderItem.seller,
             price: orderItem.price,
@@ -124,9 +128,37 @@ const processOrderItemCommission = async (orderItem, orderId, session) => {
                 transactionType: 'SALE'
             }
         });
+        
+        // Create wallet transaction for seller earnings
+        const sellerWalletTransaction = new WalletTransaction({
+            walletType: 'Seller',
+            sellerId: seller._id,
+            sellerName: seller.name,
+            orderId: orderId,
+            type: 'credit',
+            amount: sellerEarning,
+            description: `Earnings from sale of ${orderItem.qty}x ${orderItem.name}`,
+            status: 'completed',
+            metadata: {
+                orderId: orderId || 'N/A',
+                itemId: orderItem._id,
+                itemName: orderItem.name || 'Unknown Product',
+                quantity: orderItem.qty || 1,
+                pricePerItem: orderItem.price,
+                totalAmount: itemTotal,
+                transactionType: 'SALE_EARNING'
+            }
+        });
 
-        // Find admin user
-        const admin = await User.findOne({ role: 'Admin' });
+        // Find admin user (case-insensitive check)
+        const admin = await User.findOne({
+            $or: [
+                { role: 'admin' },
+                { role: 'Admin' },
+                { role: 'ADMIN' }
+            ]
+        });
+        
         if (!admin) {
             console.error('Admin user not found');
             throw new Error('Admin user not found');
@@ -166,13 +198,75 @@ const processOrderItemCommission = async (orderItem, orderId, session) => {
             }
         });
 
+        // Create wallet transaction for admin commission
+        const walletTransaction = new WalletTransaction({
+            walletType: 'Admin',
+            type: 'credit',
+            amount: adminCommission,
+            description: `Commission from order #${orderId ? orderId.toString().substring(18) : 'N/A'} - ${orderItem.name || 'Unknown Product'}`,
+            status: 'completed',
+            adminId: admin._id, // Add adminId to make it queryable
+            metadata: {
+                orderId: orderId || 'N/A',
+                itemId: itemId,
+                itemName: orderItem.name || 'Unknown Product',
+                quantity: orderItem.qty || 1,
+                sellerId: seller._id,
+                sellerName: seller.name || 'Unknown Seller',
+                transactionType: 'COMMISSION'
+            }
+        });
+        
+        // Safe logging with null checks
+        const safeLogData = {
+            walletType: 'Admin',
+            type: 'credit',
+            amount: adminCommission,
+            description: `Commission from order #${orderId ? orderId.toString().substring(0, 8) : 'N/A'} - ${orderItem?.name || 'Unknown Product'}`,
+            status: 'completed',
+            metadata: {
+                orderId: orderId ? orderId.toString() : 'N/A',
+                itemId: itemId ? itemId.toString() : 'N/A',
+                sellerId: seller?._id ? seller._id.toString() : 'N/A'
+            }
+        };
+        console.log('Created wallet transaction:', JSON.stringify(safeLogData, null, 2));
+
+        // Add transaction to admin wallet
+        adminWallet.transactions.push(walletTransaction._id);
+
+        // Add transaction to seller wallet
+        sellerWallet.transactions.push(sellerWalletTransaction._id);
+
         // Save all changes in a single transaction
-        await Promise.all([
+        console.log('Saving all transactions...');
+        const results = await Promise.all([
             sellerWallet.save({ session }),
             sellerTransaction.save({ session }),
             adminWallet.save({ session }),
-            adminTransaction.save({ session })
+            adminTransaction.save({ session }),
+            walletTransaction.save({ session }),
+            sellerWalletTransaction.save({ session })
         ]);
+        
+        const savedAdminWalletTransaction = results[4];
+        const savedSellerWalletTransaction = results[5];
+        
+        console.log('Admin wallet transaction saved successfully:', {
+            id: savedAdminWalletTransaction._id,
+            walletType: savedAdminWalletTransaction.walletType,
+            type: savedAdminWalletTransaction.type,
+            amount: savedAdminWalletTransaction.amount,
+            status: savedAdminWalletTransaction.status
+        });
+        
+        console.log('Seller wallet transaction saved successfully:', {
+            id: savedSellerWalletTransaction._id,
+            walletType: savedSellerWalletTransaction.walletType,
+            type: savedSellerWalletTransaction.type,
+            amount: savedSellerWalletTransaction.amount,
+            status: savedSellerWalletTransaction.status
+        });
 
         console.log(`Successfully processed commission for order item ${orderItem._id}`);
         return { success: true, sellerEarning, adminCommission };
@@ -407,7 +501,7 @@ exports.getOrderById = async (req, res, next) => {
     }
 };
 
-// New endpoint to get order details by ID (public endpoint for order tracking)
+
 exports.getOrderDetails = async (req, res, next) => {
     try {
         const order = await Order.findById(req.params.id)
@@ -468,7 +562,6 @@ exports.getOrderDetails = async (req, res, next) => {
 
 exports.getMyOrders = async (req, res, next) => {
     try {
-       
         if (!req.user || !req.user.id) {
             console.error('No user ID found in request');
             return res.status(401).json({
@@ -477,45 +570,43 @@ exports.getMyOrders = async (req, res, next) => {
             });
         }
 
-        const userId = req.user.id; // Changed from req.user._id to req.user.id
-        console.log('Fetching orders for user ID:', userId);
-        
-        // Try with both ObjectId and string comparison
+        const userId = req.user.id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        console.log(`Fetching orders for user ID: ${userId}, page: ${page}, limit: ${limit}`);
+
+        // Get total count for pagination
+        const total = await Order.countDocuments({
+            $or: [
+                { user: userId },
+                { user: { $eq: userId } }
+            ]
+        });
+
+        // Get paginated orders
         const orders = await Order.find({ 
             $or: [
                 { user: userId },
                 { user: { $eq: userId } }
             ]
         })
+        .sort({ createdAt: -1 }) // Sort by newest first
+        .skip(skip)
+        .limit(limit)
         .populate('user', 'name email')
         .populate('orderItems.product', 'name price image')
         .lean();
             
-        console.log('Found orders count:', orders.length);
-        
-        // If no orders found, check if user exists
-        if (orders.length === 0) {
-            console.log('No orders found for user ID:', userId);
-            const userExists = await User.findById(userId);
-            if (!userExists) {
-                console.log('User with ID does not exist:', userId);
-                return res.status(404).json({
-                    success: false,
-                    message: 'User not found'
-                });
-            }
-            
-            return res.status(200).json({
-                success: true,
-                count: 0,
-                message: 'No orders found for this user',
-                data: []
-            });
-        }
-        
+        console.log(`Found ${orders.length} orders for page ${page} of ${Math.ceil(total / limit)}`);
+
         res.status(200).json({
             success: true,
             count: orders.length,
+            total,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
             data: orders
         });
     } catch (error) {

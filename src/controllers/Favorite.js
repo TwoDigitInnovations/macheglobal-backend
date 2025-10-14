@@ -3,22 +3,33 @@ const Favourite = require('@models/Favorite');
 const response = require('../../responses');
 
 module.exports = {
-  AddFavourite: async (req, res) => {
-    try {
-      const payload = req?.body || {};
-      payload.user = req.user.id;
-      let fav = await Favourite.findOne(req?.body);
-      if (fav) {
-        await Favourite.findOneAndDelete(req?.body);
-        return response.ok(res, { message: 'Product removed to favourite' });
-      }
-      let cat = new Favourite(payload);
-      await cat.save();
-      return response.ok(res, { message: 'Product added to favourite' });
-    } catch (error) {
-      return response.error(res, error);
+AddFavourite: async (req, res) => {
+  try {
+    const payload = {
+      user: req.user.id,
+      product: req.body.product
+    };
+    
+    let fav = await Favourite.findOne({ 
+      user: req.user.id, 
+      product: req.body.product 
+    });
+    
+    if (fav) {
+      await Favourite.findOneAndDelete({ 
+        user: req.user.id, 
+        product: req.body.product 
+      });
+      return response.ok(res, { message: 'Product removed from favourite' });
     }
-  },
+    
+    let cat = new Favourite(payload);
+    await cat.save();
+    return response.ok(res, { message: 'Product added to favourite' });
+  } catch (error) {
+    return response.error(res, error);
+  }
+},
 
   getFavourite: async (req, res) => {
     try {

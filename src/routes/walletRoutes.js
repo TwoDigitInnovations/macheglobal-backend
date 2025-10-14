@@ -17,6 +17,7 @@ router.get('/admin/withdrawals', authenticate, walletController.getAllWithdrawal
 
 // Transaction history
 router.get('/transactions', authenticate, walletController.getUserTransactions);
+router.get('/transactions/seller/:sellerId', authenticate, walletController.getSellerWalletTransactions);
 
 // Dashboard stats
 router.get('/seller-stats/:sellerId', authenticate, walletController.getSellerStats);

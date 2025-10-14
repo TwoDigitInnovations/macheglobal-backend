@@ -2,8 +2,10 @@ const SellerWallet = require('../models/SellerWallet');
 const AdminWallet = require('../models/AdminWallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const WithdrawalRequest = require('../models/withdrawReq');
+const User = require('../models/User');
 const response = require('../../responses');
-const mongoose = require('mongoose')
+const mongoose = require('mongoose');
+const { isValidObjectId } = require('mongoose');
 
 
 module.exports = {
@@ -293,7 +295,7 @@ module.exports = {
 
         // 2. Create a transaction record
         const transaction = new WalletTransaction({
-          walletType: 'Seller',  // Changed from 'seller' to 'Seller' to match enum
+          walletType: 'Admin',  // Using 'Admin' for admin-related transactions
           sellerId: request.sellerId,
           type: 'debit',
           amount: request.amount,
@@ -304,13 +306,13 @@ module.exports = {
         });
         await transaction.save({ session });
 
-        // 3. Update withdrawal request status
+    
         console.log('Updating withdrawal request status to approved');
         request.status = 'approved';
         request.processedAt = new Date();
         await request.save({ session });
 
-        // 4. Commit the transaction
+      
         await session.commitTransaction();
         console.log('Withdrawal approved successfully');
         
@@ -320,14 +322,14 @@ module.exports = {
           newBalance: sellerWallet.balance
         });
       } catch (error) {
-        // If anything fails, abort the transaction
+       
         await session.abortTransaction();
         console.error('Error during withdrawal approval:', error);
         throw error;
       }
     } catch (error) {
       console.error('Error in approveWithdrawal:', error);
-      // Send detailed error to client in development
+      
       const errorMessage = process.env.NODE_ENV === 'development' 
         ? error.message 
         : 'Failed to approve withdrawal';
@@ -372,16 +374,27 @@ module.exports = {
   getUserTransactions: async (req, res) => {
     try {
       const userId = req.user.id;
-      const transactions = await WalletTransaction.find({
-        $or: [
-          { sellerId: userId },
-          { adminId: userId }
-        ]
-      })
+      const user = await User.findById(userId);
+      let query = {};
+      
+      if (user.role && user.role.toLowerCase() === 'admin') {
+        // If user is admin, get all admin transactions
+        query = { walletType: 'Admin' };
+      } else {
+        // For regular users, get their transactions
+        query = {
+          $or: [
+            { sellerId: userId },
+            { adminId: userId }
+          ]
+        };
+      }
+      
+      const transactions = await WalletTransaction.find(query)
         .sort({ createdAt: -1 })
         .limit(50);
 
-      return response.ok(res, { transactions });
+      return response.ok(res, transactions);
     } catch (error) {
       console.error('Error fetching user transactions:', error);
       return response.error(res, 'Error fetching transactions');
@@ -435,31 +448,123 @@ module.exports = {
 
   getAdminStats: async (req, res) => {
     try {
-      const wallet = await AdminWallet.findOne({});
-      const totalCommission = await WalletTransaction.aggregate([
+      const totalEarnings = await WalletTransaction.aggregate([
         { $match: { walletType: 'admin', type: 'credit' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
-      const totalPayouts = await WithdrawalRequest.aggregate([
-        { $match: { status: 'approved' } },
+
+      const totalWithdrawals = await WithdrawalRequest.aggregate([
+        { $match: { status: 'completed' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
-      const pendingCount = await WithdrawalRequest.countDocuments({
-        status: 'pending'
-      });
-      const activeSellers = await SellerWallet.countDocuments({
-        balance: { $gt: 0 }
-      });
+
+      const pendingWithdrawals = await WithdrawalRequest.aggregate([
+        { $match: { status: 'pending' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      const activeSellers = await User.countDocuments({ role: 'seller', isActive: true });
 
       return response.ok(res, {
-        balance: wallet.balance,
-        totalCommission: totalCommission[0]?.total || 0,
-        totalPayouts: totalPayouts[0]?.total || 0,
-        pendingCount,
+        totalEarnings: totalEarnings[0]?.total || 0,
+        totalWithdrawals: totalWithdrawals[0]?.total || 0,
+        pendingWithdrawals: pendingWithdrawals[0]?.total || 0,
         activeSellers
       });
     } catch (error) {
       return response.error(res, error);
+    }
+  },
+
+  // Get wallet transactions for a specific seller with product details
+  getSellerWalletTransactions: async (req, res) => {
+    try {
+      const { sellerId } = req.params;
+      
+      if (!sellerId || !isValidObjectId(sellerId)) {
+        return response.error(res, 'Valid seller ID is required');
+      }
+
+      // Find all wallet transactions for the seller
+      const transactions = await WalletTransaction.aggregate([
+        {
+          $match: {
+            $or: [
+              { sellerId: new mongoose.Types.ObjectId(sellerId) },
+              { 'metadata.sellerId': sellerId }
+            ]
+          }
+        },
+        {
+          $lookup: {
+            from: 'orders',
+            localField: 'orderId',
+            foreignField: '_id',
+            as: 'order'
+          }
+        },
+        { $unwind: { path: '$order', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'products',
+            localField: 'metadata.itemId',
+            foreignField: '_id',
+            as: 'product'
+          }
+        },
+        { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            walletType: 1,
+            sellerId: 1,
+            orderId: 1,
+            type: 1,
+            amount: 1,
+            description: 1,
+            status: 1,
+            metadata: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            productDetails: {
+              $cond: {
+                if: { $eq: ['$product', null] },
+                then: null,
+                else: {
+                  name: '$product.name',
+                  image: { $arrayElemAt: ['$product.images', 0] },
+                  price: '$product.price',
+                  quantity: '$metadata.quantity',
+                  total: { $multiply: ['$product.price', '$metadata.quantity'] }
+                }
+              }
+            },
+            orderDetails: {
+              $cond: {
+                if: { $eq: ['$order', null] },
+                then: null,
+                else: {
+                  orderNumber: '$order.orderNumber',
+                  orderDate: '$order.paidAt',
+                  customerName: '$order.shippingAddress.name',
+                  shippingAddress: {
+                    address: '$order.shippingAddress.address',
+                    city: '$order.shippingAddress.city',
+                    postalCode: '$order.shippingAddress.postalCode',
+                    country: '$order.shippingAddress.country'
+                  }
+                }
+              }
+            }
+          }
+        },
+        { $sort: { createdAt: -1 } }
+      ]);
+
+      return response.ok(res, transactions);
+    } catch (error) {
+      console.error('Error fetching seller wallet transactions:', error);
+      return response.error(res, 'Failed to fetch wallet transactions');
     }
   }
 };
