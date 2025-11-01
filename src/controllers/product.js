@@ -22,6 +22,11 @@ const cleanAndUnique = (data) => {
   );
 };
 
+// const Order = require('../models/Order');
+// const Product = require('../models/product');
+const WithdrawalRequest = require('../models/withdrawReq');
+const WalletTransaction = require('../models/WalletTransaction');
+
 module.exports = {
   createProduct: async (req, res) => {
     try {
@@ -767,6 +772,56 @@ getProductById: async (req, res) => {
       return response.ok(res, products);
     } catch (error) {
       return response.error(res, error);
+    }
+  },
+
+  getDashboardStats: async (req, res) => {
+    try {
+      // Get total sales (sum of all paid orders)
+      const [totalSalesData] = await Order.aggregate([
+        { $match: { isPaid: true } },
+        { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+      ]);
+
+      // Get count of pending orders
+      const pendingOrdersCount = await Order.countDocuments({ 
+        status: { $in: ['pending', 'processing'] } 
+      });
+
+      // Get total products in stock
+      const [productsInStock] = await Product.aggregate([
+        { $group: { _id: null, total: { $sum: '$stock' } } }
+      ]);
+
+      // Get total earnings (from admin wallet credits)
+      const [earningsData] = await WalletTransaction.aggregate([
+        { $match: { walletType: 'admin', type: 'credit' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      // Get count of refund requests
+      const refundRequestsCount = await Order.countDocuments({
+        status: 'refund_requested'
+      });
+
+      // Get count of completed payouts
+      const payoutsCompleted = await WithdrawalRequest.countDocuments({
+        status: 'completed'
+      });
+
+      const stats = {
+        totalSales: totalSalesData?.total || 0,
+        pendingOrders: pendingOrdersCount,
+        productsInStock: productsInStock?.total || 0,
+        earnings: earningsData?.total || 0,
+        refundRequests: refundRequestsCount,
+        payoutsCompleted: payoutsCompleted
+      };
+
+      return response.ok(res, stats);
+    } catch (error) {
+      console.error('Error in getDashboardStats:', error);
+      return response.error(res, 'Failed to fetch dashboard statistics');
     }
   },
 

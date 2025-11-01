@@ -25,5 +25,6 @@ router.get('/dashboarddetails', product.dashboarddetails);
 router.get('/getMonthlySales', product.getMonthlySales);
 router.get('/getTopSoldProduct', product.getTopSoldProduct);
 router.get('/getLowStockProduct', product.getLowStockProduct);
+router.get('/dashboard-stats', product.getDashboardStats);
 
 module.exports = router;

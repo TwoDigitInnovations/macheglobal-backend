@@ -3,6 +3,7 @@ const Order = require('../models/Order');
 const Product = require('../models/product');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const { createOrderNotification } = require('./notificationController');
 const AdminWallet = require('../models/AdminWallet');
 const SellerWallet = require('../models/SellerWallet');
 const WalletTransaction = require('../models/WalletTransaction');
@@ -351,26 +352,25 @@ exports.createOrder = async (req, res, next) => {
                 id: `manual-${Date.now()}`,
                 status: 'COMPLETED',
                 update_time: new Date().toISOString(),
-                email_address: shippingAddress.email || 'customer@example.com',
-            },
+                email_address: shippingAddress?.email || 'customer@example.com'
+            }
         });
 
-        // Save the order
         const createdOrder = await order.save({ session });
-        console.log('Order created:', createdOrder._id);
 
-        // Process commission for each order item
+        // Create order notification
+        try {
+            await createOrderNotification(createdOrder._id, req.body.user, session);
+            console.log('Order notification created for order:', createdOrder._id);
+        } catch (notificationErr) {
+            console.error('Error creating order notification:', notificationErr);
+            // Don't fail the order if notification fails
+        }
+
         const commissionResults = [];
-        for (const item of createdOrder.orderItems) {
+
+        for (const item of orderItems) {
             try {
-                console.log(`\n--- Processing commission for item ---`);
-                console.log('Item details:', {
-                    productId: item.product,
-                    sellerId: item.seller,
-                    price: item.price,
-                    quantity: item.qty
-                });
-                
                 const result = await processOrderItemCommission(item, createdOrder._id, session);
                 console.log('Commission processed successfully:', result);
                 commissionResults.push(result);
@@ -657,9 +657,17 @@ exports.updateOrderToPaid = async (req, res, next) => {
 
         // Save the order first
         const updatedOrder = await order.save({ session });
-        console.log('Order marked as paid:', updatedOrder._id);
 
-        // Process commission for each order item in series to avoid race conditions
+        // Create order notification
+        try {
+            await createOrderNotification(updatedOrder._id, order.user, session);
+            console.log('Order notification created for order:', order._id);
+        } catch (notificationErr) {
+            console.error('Error creating order notification:', notificationErr);
+            // Don't fail the order if notification fails
+        }
+
+        // Process commissions for each order item
         const commissionResults = [];
         for (const item of order.orderItems) {
             try {
