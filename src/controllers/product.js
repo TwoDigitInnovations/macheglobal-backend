@@ -308,7 +308,9 @@ getProductById: async (req, res) => {
       let cond = {
         $or: [
           { name: { $regex: req.query.key, $options: 'i' } },
-          { brandName: { $regex: req.query.key, $options: 'i' } }
+          { brandName: { $regex: req.query.key, $options: 'i' } },
+          { categoryName: { $regex: req.query.key, $options: 'i' } },
+          { subCategoryName: { $regex: req.query.key, $options: 'i' } }
         ]
       };
       const product = await Product.find(cond).sort({ createdAt: -1 });
@@ -501,6 +503,7 @@ getProductById: async (req, res) => {
         const [orders, totalItems] = await Promise.all([
           Order.find(baseQuery)
             .populate('orderItems.product')
+            .populate('orderItems.seller', 'name email phone')
             .populate('user', 'name email phone')
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -606,6 +609,10 @@ getProductById: async (req, res) => {
           path: 'orderItems.product',
           select: 'name price image description vietnamiesName SellerId',
           match: { _id: { $in: productIds } }
+        })
+        .populate({
+          path: 'orderItems.seller',
+          select: 'name email phone'
         })
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -878,3 +885,4 @@ getProductById: async (req, res) => {
     }
   }
 };
+
