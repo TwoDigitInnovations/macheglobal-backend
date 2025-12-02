@@ -9,6 +9,7 @@ const {
     getOrdersBySeller,
     getOrderDetails
 } = require('../controllers/orderController');
+const { generateInvoice } = require('../controllers/invoiceController');
 
 // Create a new order
 router.post('/api/orders', authenticate, createOrder);
@@ -30,5 +31,8 @@ router.get('/api/orders/details/:id', getOrderDetails);
 
 
 router.get('/api/product/getOrderBySeller', authenticate, getOrdersBySeller);
+
+// Invoice route
+router.get('/api/invoice/:orderId', generateInvoice);
 
 module.exports = router;
