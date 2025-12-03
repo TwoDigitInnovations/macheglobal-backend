@@ -8,7 +8,7 @@ const setupChatSocket = require('./socket/chatSocket');
 
 const PORT = process.env.PORT || 5000;
 
-// Create HTTP server
+
 const server = http.createServer(app);
 
 // Setup Socket.IO
