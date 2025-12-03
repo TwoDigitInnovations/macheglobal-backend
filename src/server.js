@@ -11,15 +11,34 @@ const PORT = process.env.PORT || 5000;
 
 const server = http.createServer(app);
 
-// Setup Socket.IO
+
 const io = socketIO(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'], 
+  allowEIO3: true, 
+  pingTimeout: 60000, 
+  pingInterval: 25000, 
+  upgradeTimeout: 30000, 
+  maxHttpBufferSize: 1e6, 
+  allowUpgrades: true,
+  perMessageDeflate: false, 
+  httpCompression: false
 });
 
-// Setup chat socket handlers
+
+io.on('connection', (socket) => {
+ 
+  
+  socket.conn.on('upgrade', (transport) => {
+    console.log('⬆️ [SERVER] Transport upgraded to:', transport.name);
+  });
+});
+
+
 setupChatSocket(io);
 
 server.listen(PORT, () => {

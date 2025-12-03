@@ -8,13 +8,21 @@ const setupChatSocket = (io) => {
   const socketToUser = new Map(); // socketId userId mapping (for disconnect)
 
   io.on('connection', (socket) => {
-   
+    console.log('✅ [SOCKET] New connection established. Socket ID:', socket.id);
+    console.log('📊 [SOCKET] Total active connections:', io.engine.clientsCount);
 
    
     socket.on('joinRoom', async ({ userId, sellerId, productId }) => {
       try {
+        console.log('📨 [JOIN] User joining room:', {
+          userId,
+          sellerId,
+          productId,
+          socketId: socket.id
+        });
         
         if (userId === sellerId || userId.toString() === sellerId.toString()) {
+          console.log('⚠️ [JOIN] User trying to chat with themselves, ignoring');
           return;
         }
         socketToUser.set(socket.id, userId);
@@ -28,6 +36,7 @@ const setupChatSocket = (io) => {
         const roomId = [userId, sellerId].sort().join('_');
         socket.join(roomId);
         userRooms.get(userId).add(roomId);
+        console.log('✅ [JOIN] User joined room:', roomId);
 
     
         io.to(roomId).emit('userStatus', {
@@ -58,6 +67,7 @@ const setupChatSocket = (io) => {
         .sort({ timestamp: 1 })
         .limit(50);
 
+        console.log('📥 [JOIN] Sending previous messages:', messages.length, 'messages');
         socket.emit('previousMessages', messages);
 
       
@@ -84,6 +94,14 @@ const setupChatSocket = (io) => {
     socket.on('sendMessage', async (messageData) => {
       try {
         const { senderId, receiverId, message, productId, timestamp } = messageData;
+        
+        console.log('📤 [MESSAGE] Received message to send:', {
+          from: senderId,
+          to: receiverId,
+          text: message.substring(0, 50),
+          productId,
+          socketId: socket.id
+        });
 
         // Save message to database
         const newMessage = new Message({
@@ -96,9 +114,11 @@ const setupChatSocket = (io) => {
         });
 
         await newMessage.save();
+        console.log('💾 [MESSAGE] Message saved to database. ID:', newMessage._id);
 
         
         const roomId = [senderId, receiverId].sort().join('_');
+        console.log('📨 [MESSAGE] Broadcasting to room:', roomId);
       
         let conversation = await Conversation.findOne({
           participants: { $all: [senderId, receiverId] }
@@ -133,19 +153,24 @@ const setupChatSocket = (io) => {
 
        
         io.to(roomId).emit('newMessage', newMessage);
+        console.log('✅ [MESSAGE] Message broadcasted to room:', roomId);
 
     
         const receiverSocketId = userSockets.get(receiverId);
         if (receiverSocketId) {
+          console.log('🔔 [MESSAGE] Sending notification to receiver:', receiverId);
           io.to(receiverSocketId).emit('newMessageNotification', {
             senderId,
             message,
             productId
           });
+        } else {
+          console.log('⚠️ [MESSAGE] Receiver not online:', receiverId);
         }
 
       } catch (error) {
-        console.error('❌ Error sending message:', error);
+        console.error('❌ [MESSAGE] Error sending message:', error);
+        console.error('❌ [MESSAGE] Error stack:', error.stack);
       }
     });
 
@@ -162,6 +187,7 @@ const setupChatSocket = (io) => {
 
   
     socket.on('disconnect', () => {
+      console.log('🔌 [SOCKET] Client disconnected. Socket ID:', socket.id);
     
       const userId = socketToUser.get(socket.id);
       
@@ -173,7 +199,7 @@ const setupChatSocket = (io) => {
         socketToUser.delete(socket.id);
         userLastSeen.set(userId, disconnectTime);
         
-        console.log(`❌ User ${userId} disconnected`);
+        console.log(`❌ [DISCONNECT] User ${userId} disconnected at ${disconnectTime}`);
         
         
         const rooms = userRooms.get(userId);
