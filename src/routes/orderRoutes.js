@@ -7,7 +7,8 @@ const {
     updateOrderToPaid,
     getMyOrders,
     getOrdersBySeller,
-    getOrderDetails
+    getOrderDetails,
+    updateOrderStatus
 } = require('../controllers/orderController');
 const { generateInvoice } = require('../controllers/invoiceController');
 
@@ -31,6 +32,9 @@ router.get('/api/orders/details/:id', getOrderDetails);
 
 
 router.get('/api/product/getOrderBySeller', authenticate, getOrdersBySeller);
+
+// Update order status
+router.post('/api/orders/updateStatus', authenticate, updateOrderStatus);
 
 // Invoice route
 router.get('/api/invoice/:orderId', generateInvoice);

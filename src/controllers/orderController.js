@@ -718,6 +718,65 @@ exports.updateOrderToPaid = async (req, res, next) => {
     }
 };
 
+exports.updateOrderStatus = async (req, res) => {
+    try {
+        const { id, status } = req.body;
+
+        if (!id) {
+            return res.status(400).json({
+                status: false,
+                message: 'Order ID is required'
+            });
+        }
+
+        if (!status) {
+            return res.status(400).json({
+                status: false,
+                message: 'Status is required'
+            });
+        }
+
+        const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+        if (!validStatuses.includes(status.toLowerCase())) {
+            return res.status(400).json({
+                status: false,
+                message: 'Invalid status value. Valid values are: pending, processing, shipped, delivered, cancelled'
+            });
+        }
+
+        const order = await Order.findById(id);
+        if (!order) {
+            return res.status(404).json({
+                status: false,
+                message: 'Order not found'
+            });
+        }
+
+        // Update the status
+        order.status = status.toLowerCase();
+        
+        // Update isDelivered if status is delivered
+        if (status.toLowerCase() === 'delivered') {
+            order.isDelivered = true;
+            order.deliveredAt = new Date();
+        }
+
+        await order.save();
+
+        return res.status(200).json({
+            status: true,
+            message: 'Order status updated successfully',
+            data: order
+        });
+    } catch (error) {
+        console.error('Error updating order status:', error);
+        return res.status(500).json({
+            status: false,
+            message: error.message || 'Internal server error'
+        });
+    }
+};
+
 exports.getOrdersBySeller = async (req, res, next) => {
     try {
         const pageSize = 10;

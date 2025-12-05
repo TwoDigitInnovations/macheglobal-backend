@@ -333,8 +333,38 @@ getProductById: async (req, res) => {
 
   deleteProduct: async (req, res) => {
     try {
-      await Product.findByIdAndDelete(req?.params?.id);
-      return response.ok(res, { meaasge: 'Deleted successfully' });
+      const productId = req?.params?.id;
+      const { confirmFlashSaleDelete } = req?.body || {};
+
+      // Check if product exists in any flash sale
+      const FlashSale = require('@models/sale');
+      const flashSales = await FlashSale.find({ 
+        product: productId,
+        status: { $in: ['ACTIVE', 'INACTIVE'] }
+      });
+
+      // If product is in flash sale and user hasn't confirmed deletion
+      if (flashSales.length > 0 && !confirmFlashSaleDelete) {
+        return response.ok(res, {
+          requiresConfirmation: true,
+          flashSaleCount: flashSales.length,
+          message: 'This product is in flash sale. Deleting it will also remove the flash sale.'
+        });
+      }
+
+      // Delete flash sales associated with this product
+      if (flashSales.length > 0) {
+        await FlashSale.deleteMany({ product: productId });
+      }
+
+      // Delete the product
+      await Product.findByIdAndDelete(productId);
+      
+      return response.ok(res, { 
+        message: flashSales.length > 0 
+          ? 'Product and associated flash sale(s) deleted successfully' 
+          : 'Product deleted successfully' 
+      });
     } catch (error) {
       return response.error(res, error);
     }
@@ -471,7 +501,7 @@ getProductById: async (req, res) => {
       console.log('Request query:', req.query);
       console.log('Authenticated user:', req.user);
       
-      const { curentDate, orderId, sellerId: requestedSellerId } = req.body || {};
+      const { curentDate, orderId, sellerId: requestedSellerId, search } = req.body || {};
       let page = parseInt(req.query.page) || 1;
       let limit = parseInt(req.query.limit) || 10;
       let skip = (page - 1) * limit;
@@ -486,9 +516,11 @@ getProductById: async (req, res) => {
         // Add date filter if provided
         if (curentDate) {
           const date = new Date(curentDate);
+          date.setHours(0, 0, 0, 0);
           const nextDay = new Date(date);
           nextDay.setDate(date.getDate() + 1);
-          baseQuery.createdAt = { $gte: date, $lte: nextDay };
+          nextDay.setHours(0, 0, 0, 0);
+          baseQuery.createdAt = { $gte: date, $lt: nextDay };
         }
         
         // Add order ID filter if provided
@@ -497,6 +529,27 @@ getProductById: async (req, res) => {
           if (trimmedOrderId.length > 0) {
             baseQuery.orderId = { $regex: trimmedOrderId, $options: 'i' };
           }
+        }
+        
+        // Add search filter for name, email, or order ID
+        if (search && search.trim()) {
+          const searchRegex = { $regex: search.trim(), $options: 'i' };
+          
+          // First, find users matching the search
+          const matchingUsers = await User.find({
+            $or: [
+              { name: searchRegex },
+              { email: searchRegex }
+            ]
+          }).select('_id');
+          
+          const userIds = matchingUsers.map(u => u._id);
+          
+          // Build search query
+          baseQuery.$or = [
+            { orderId: searchRegex },
+            { user: { $in: userIds } }
+          ];
         }
         
         // Get all orders with seller information
@@ -579,6 +632,31 @@ getProductById: async (req, res) => {
       if (orderId && orderId.trim()) {
         query.orderId = { $regex: orderId.trim(), $options: 'i' };
         console.log('Order ID filter:', orderId.trim());
+      }
+
+      // Add search filter for name, email, or order ID
+      if (search && search.trim()) {
+        const searchRegex = { $regex: search.trim(), $options: 'i' };
+        
+        // First, find users matching the search
+        const matchingUsers = await User.find({
+          $or: [
+            { name: searchRegex },
+            { email: searchRegex }
+          ]
+        }).select('_id');
+        
+        const userIds = matchingUsers.map(u => u._id);
+        
+        // Add to query - search by order ID or user
+        if (!query.$or) {
+          query.$or = [];
+        }
+        query.$or.push(
+          { orderId: searchRegex },
+          { user: { $in: userIds } }
+        );
+        console.log('Search filter applied:', search.trim());
       }
 
       // Reuse existing page, limit, skip variables

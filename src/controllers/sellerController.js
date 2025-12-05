@@ -305,15 +305,54 @@ const deleteSellerStore = async (req, res) => {
 
 const getAllSellerStores = async (req, res) => {
   try {
-    const { status, page = 1, limit = 10 } = req.query;
+    const { status, page = 1, limit = 10, search, type } = req.query;
+    
+    console.log('getAllSellerStores called with params:', { status, page, limit, search, type });
+    
+    // First, let's check total count without any filters
+    const totalCount = await SellerStore.countDocuments({});
+    console.log('Total sellers in database (no filters):', totalCount);
     
     const query = {};
-    if (status) {
-      query.status = status;
+    
+    // Note: 'type' parameter is ignored as SellerStore doesn't have a type field
+    // All stores in SellerStore collection are seller stores by definition
+    
+    // Filter by status if provided (commented out for debugging)
+    // if (status) {
+    //   query.status = status;
+    // }
+
+    // Add search functionality
+    if (search && search.trim()) {
+      const searchRegex = { $regex: search.trim(), $options: 'i' };
+      
+      // First, find users matching the search
+      const matchingUsers = await User.find({
+        $or: [
+          { name: searchRegex },
+          { email: searchRegex }
+        ]
+      }).select('_id');
+      
+      const userIds = matchingUsers.map(u => u._id);
+      
+      console.log('Search query - Found matching users:', userIds.length);
+      
+      // Search in store fields or matching user IDs
+      query.$or = [
+        { storeName: searchRegex },
+        { ownerName: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex },
+        { userId: { $in: userIds } }
+      ];
     }
 
+    console.log('Final query:', JSON.stringify(query, null, 2));
+
     const stores = await SellerStore.find(query)
-      .populate('userId', 'name email')
+      .populate('userId', 'name email phone status')
       .select('-__v')
       .limit(limit * 1)
       .skip((page - 1) * limit)
@@ -321,9 +360,18 @@ const getAllSellerStores = async (req, res) => {
 
     const count = await SellerStore.countDocuments(query);
 
+    console.log(`Found ${count} total stores, returning ${stores.length} stores for page ${page}`);
+
     res.status(200).json({
       success: true,
       data: stores,
+      pagination: {
+        totalPages: Math.ceil(count / limit),
+        currentPage: parseInt(page),
+        itemsPerPage: parseInt(limit),
+        totalItems: count
+      },
+      // Keep old format for backward compatibility
       totalPages: Math.ceil(count / limit),
       currentPage: parseInt(page),
       totalStores: count
