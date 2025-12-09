@@ -92,19 +92,27 @@ exports.createReview = async (req, res) => {
     let uploadedImages = [];
     if (images && images.length > 0) {
       try {
+        // Process each image - if it's already a URL, use it directly
         const uploadPromises = images.map(async (image) => {
-          const result = await uploadToCloudinary(image, {
-            folder: 'reviews',
-            resource_type: 'image'
-          });
-          return result.secure_url;
+          // Check if image is already a Cloudinary URL (starts with http/https)
+          if (typeof image === 'string' && (image.startsWith('http://') || image.startsWith('https://'))) {
+            console.log('Image already uploaded to Cloudinary:', image);
+            return image; // Return the URL directly
+          }
+          
+          // Otherwise, upload the file
+          console.log('Uploading new image to Cloudinary');
+          const result = await uploadToCloudinary(image, 'reviews');
+          return result.url || result.secure_url;
         });
         uploadedImages = await Promise.all(uploadPromises);
+        console.log('Final uploaded images:', uploadedImages);
       } catch (uploadError) {
         console.error('Error uploading images:', uploadError);
         return res.status(500).json({
           success: false,
-          message: 'Error uploading review images'
+          message: 'Error uploading review images',
+          error: uploadError.message
         });
       }
     }
