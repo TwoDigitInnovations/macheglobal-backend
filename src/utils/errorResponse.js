@@ -3,7 +3,6 @@ class ErrorResponse extends Error {
     super(message);
     this.statusCode = statusCode;
 
-    
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ErrorResponse);
     }
