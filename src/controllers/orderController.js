@@ -8,6 +8,7 @@ const AdminWallet = require('../models/AdminWallet');
 const SellerWallet = require('../models/SellerWallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const ErrorResponse = require('../utils/errorResponse');
+const CreditTransaction = require('../models/CreditTransaction');
 const { v4: uuidv4 } = require('uuid');
 
 // Helper function to process commission for each order item
@@ -296,6 +297,7 @@ exports.createOrder = async (req, res, next) => {
             taxPrice = 0,
             shippingPrice = 0,
             totalPrice,
+            creditUsed = 0,
             user: userId
         } = req.body;
 
@@ -306,6 +308,29 @@ exports.createOrder = async (req, res, next) => {
 
         if (!userId) {
             throw new Error('User ID is required');
+        }
+
+        // Handle credit balance deduction if used
+        if (creditUsed > 0) {
+            const CreditTransaction = require('../models/CreditTransaction');
+            const user = await User.findById(userId).session(session);
+            
+            if (!user) {
+                throw new Error('User not found');
+            }
+
+            if (user.creditBalance < creditUsed) {
+                throw new Error('Insufficient credit balance');
+            }
+
+            const balanceBefore = user.creditBalance;
+            const balanceAfter = balanceBefore - creditUsed;
+
+            // Deduct credit balance
+            user.creditBalance = balanceAfter;
+            await user.save({ session });
+
+            console.log(`Deducted ${creditUsed} from user ${userId} credit balance`);
         }
 
         // Validate order items
@@ -357,6 +382,26 @@ exports.createOrder = async (req, res, next) => {
         });
 
         const createdOrder = await order.save({ session });
+
+        // Create credit transaction if credit was used
+        if (creditUsed > 0) {
+            const CreditTransaction = require('../models/CreditTransaction');
+            const user = await User.findById(userId).session(session);
+            
+            const creditTransaction = new CreditTransaction({
+                user: userId,
+                order: createdOrder._id,
+                amount: creditUsed,
+                type: 'debit',
+                reason: 'order_payment',
+                description: `Payment for order #${createdOrder.orderId}`,
+                balanceBefore: user.creditBalance + creditUsed,
+                balanceAfter: user.creditBalance
+            });
+            await creditTransaction.save({ session });
+            
+            console.log(`Created credit transaction for ${creditUsed} deduction`);
+        }
 
         // Create order notification
         try {
@@ -719,10 +764,15 @@ exports.updateOrderToPaid = async (req, res, next) => {
 };
 
 exports.updateOrderStatus = async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
     try {
         const { id, status } = req.body;
 
         if (!id) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(400).json({
                 status: false,
                 message: 'Order ID is required'
@@ -730,28 +780,36 @@ exports.updateOrderStatus = async (req, res) => {
         }
 
         if (!status) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(400).json({
                 status: false,
                 message: 'Status is required'
             });
         }
 
-        const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+        const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'];
         if (!validStatuses.includes(status.toLowerCase())) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(400).json({
                 status: false,
-                message: 'Invalid status value. Valid values are: pending, processing, shipped, delivered, cancelled'
+                message: 'Invalid status value. Valid values are: pending, processing, shipped, delivered, cancelled, returned'
             });
         }
 
-        const order = await Order.findById(id);
+        const order = await Order.findById(id).session(session);
         if (!order) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(404).json({
                 status: false,
                 message: 'Order not found'
             });
         }
 
+        const previousStatus = order.status;
+        
         // Update the status
         order.status = status.toLowerCase();
         
@@ -761,7 +819,48 @@ exports.updateOrderStatus = async (req, res) => {
             order.deliveredAt = new Date();
         }
 
-        await order.save();
+        // Handle credit refund for cancelled or returned orders
+        if ((status.toLowerCase() === 'cancelled' || status.toLowerCase() === 'returned') && !order.refundedToCredit) {
+            
+            
+            // Get user
+            const user = await User.findById(order.user).session(session);
+            if (!user) {
+                throw new Error('User not found');
+            }
+
+            const refundAmount = order.totalPrice;
+            const balanceBefore = user.creditBalance || 0;
+            const balanceAfter = balanceBefore + refundAmount;
+
+            // Update user credit balance
+            user.creditBalance = balanceAfter;
+            await user.save({ session });
+
+            // Create credit transaction record
+            const creditTransaction = new CreditTransaction({
+                user: user._id,
+                order: order._id,
+                amount: refundAmount,
+                type: 'credit',
+                reason: status.toLowerCase() === 'cancelled' ? 'order_cancelled' : 'order_returned',
+                description: `Refund for ${status.toLowerCase()} order #${order.orderId}`,
+                balanceBefore,
+                balanceAfter
+            });
+            await creditTransaction.save({ session });
+
+            // Mark order as refunded
+            order.refundedToCredit = true;
+            order.refundAmount = refundAmount;
+
+            console.log(`Refunded ${refundAmount} to user ${user._id} credit balance for order ${order._id}`);
+        }
+
+        await order.save({ session });
+
+        await session.commitTransaction();
+        session.endSession();
 
         return res.status(200).json({
             status: true,
@@ -770,6 +869,8 @@ exports.updateOrderStatus = async (req, res) => {
         });
     } catch (error) {
         console.error('Error updating order status:', error);
+        await session.abortTransaction();
+        session.endSession();
         return res.status(500).json({
             status: false,
             message: error.message || 'Internal server error'

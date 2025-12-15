@@ -93,13 +93,25 @@ const setupChatSocket = (io) => {
    
     socket.on('sendMessage', async (messageData) => {
       try {
-        const { senderId, receiverId, message, productId, timestamp } = messageData;
+        const { 
+          senderId, 
+          receiverId, 
+          message, 
+          productId, 
+          productImage,
+          productName,
+          productPrice,
+          timestamp 
+        } = messageData;
         
         console.log('📤 [MESSAGE] Received message to send:', {
           from: senderId,
           to: receiverId,
           text: message.substring(0, 50),
           productId,
+          productImage,
+          productName,
+          productPrice,
           socketId: socket.id
         });
 
@@ -109,6 +121,9 @@ const setupChatSocket = (io) => {
           receiverId,
           message,
           productId,
+          productImage,
+          productName,
+          productPrice,
           timestamp: timestamp || new Date(),
           isRead: false
         });

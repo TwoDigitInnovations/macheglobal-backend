@@ -65,7 +65,11 @@ const productSchema = new mongoose.Schema(
       type: String
     },
     Attribute: [],
-    price_slot: []
+    price_slot: [],
+    is_manufacturer_product: {
+      type: Boolean,
+      default: false
+    }
   },
   {
     timestamps: true

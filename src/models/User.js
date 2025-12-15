@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String
     },
+    creditBalance: {
+      type: Number,
+      default: 0
+    },
     role: {
       type: String,
       enum: ['User', 'Admin', 'Seller'], // Define user roles

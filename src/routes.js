@@ -11,6 +11,8 @@ const walletRoutes = require('./routes/walletRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const creditRoutes = require('./routes/creditRoutes');
 
 module.exports = (app) => {
   app.use('/api/auth', authRoutes);
@@ -25,5 +27,7 @@ module.exports = (app) => {
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/chat', chatRoutes);
   app.use('/api/invoice', invoiceRoutes);
+  app.use('/api/coupon', couponRoutes);
+  app.use(creditRoutes);
   app.use(orderRoutes);
 };

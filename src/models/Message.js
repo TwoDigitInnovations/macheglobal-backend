@@ -20,6 +20,18 @@ const messageSchema = new mongoose.Schema({
     ref: 'Product',
     default: null
   },
+  productImage: {
+    type: String,
+    default: null
+  },
+  productName: {
+    type: String,
+    default: null
+  },
+  productPrice: {
+    type: Number,
+    default: null
+  },
   timestamp: {
     type: Date,
     default: Date.now

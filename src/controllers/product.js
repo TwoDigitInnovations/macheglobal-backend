@@ -102,6 +102,58 @@ module.exports = {
         cond.SellerId = req.query.SellerId;
       }
 
+      // Filter by product type (manufacturer or general)
+      if (req.query.is_manufacturer_product !== undefined) {
+        cond.is_manufacturer_product = req.query.is_manufacturer_product === 'true';
+      }
+
+      let products = await Product.find(cond)
+        .populate('category')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
+
+      let totalProducts = await Product.countDocuments(cond);
+      const totalPages = Math.ceil(totalProducts / limit);
+
+      return res.status(200).json({
+        status: true,
+        data: products,
+        pagination: {
+          totalItems: totalProducts,
+          totalPages,
+          currentPage: page,
+          itemsPerPage: limit
+        }
+      });
+    } catch (error) {
+      return response.error(res, error);
+    }
+  },
+
+  getManufacturerProducts: async (req, res) => {
+    try {
+      let page = parseInt(req.query.page) || 1;
+      let limit = parseInt(req.query.limit) || 10;
+      let skip = (page - 1) * limit;
+
+      let cond = {
+        is_manufacturer_product: true
+      };
+
+      // Category filter
+      if (req.query.Category && req.query.Category !== 'all') {
+        cond.categoryName = req.query.Category;
+      }
+
+      // Search filter
+      if (req.query.searchTerm) {
+        cond.$or = [
+          { name: { $regex: req.query.searchTerm, $options: 'i' } },
+          { short_description: { $regex: req.query.searchTerm, $options: 'i' } }
+        ];
+      }
+
       let products = await Product.find(cond)
         .populate('category')
         .sort({ createdAt: -1 })
