@@ -180,7 +180,7 @@ module.exports = {
             <p style="color: #555; line-height: 1.6;">You can now access your seller dashboard and start listing your products.</p>
             
             <div style="text-align: center; margin: 30px 0;">
-              <a href="${process.env.FRONTEND_URL || 'https://macheglobal.com/seller/dashboard'}" 
+              <a href="${'https://www.seller.macheglobal.com/login'}" 
                  style="display: inline-block; background-color: #FF7000; color: white; 
                         text-decoration: none; padding: 12px 30px; border-radius: 4px; 
                         font-weight: bold; font-size: 16px;">
