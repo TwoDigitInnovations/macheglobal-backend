@@ -28,6 +28,14 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String
     },
+    avatar: {
+      type: String,
+      default: ''
+    },
+    profile: {
+      type: String,
+      default: ''
+    },
     creditBalance: {
       type: Number,
       default: 0

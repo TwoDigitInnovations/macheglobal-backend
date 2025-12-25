@@ -11,14 +11,67 @@ const { isValidObjectId } = require('mongoose');
 module.exports = {
   getSellerWallet: async (req, res) => {
     try {
-      const wallet = await SellerWallet.findOne({
-        sellerId: req.params.sellerId
-      })
-        .populate('sellerId', 'name email')
-        .populate('transactions');
-      if (!wallet) return response.error(res, 'Seller wallet not found');
-      return response.ok(res, wallet);
+      const { sellerId } = req.params;
+      
+      const wallet = await SellerWallet.findOne({ sellerId })
+        .populate('sellerId', 'name email');
+      
+      if (!wallet) {
+        return response.error(res, 'Seller wallet not found');
+      }
+
+      // Calculate total earnings (all credits to seller wallet)
+      const totalEarningsResult = await WalletTransaction.aggregate([
+        { 
+          $match: { 
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            type: 'credit',
+            status: 'completed'
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalEarnings = totalEarningsResult[0]?.total || 0;
+
+      // Calculate pending withdrawals amount
+      const pendingWithdrawalsResult = await WithdrawalRequest.aggregate([
+        { 
+          $match: { 
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            status: 'pending'
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const pendingWithdrawals = pendingWithdrawalsResult[0]?.total || 0;
+
+      // Calculate this month's earnings
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      const thisMonthResult = await WalletTransaction.aggregate([
+        {
+          $match: {
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            type: 'credit',
+            status: 'completed',
+            createdAt: { $gte: startOfMonth }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const thisMonthEarnings = thisMonthResult[0]?.total || 0;
+
+      return response.ok(res, {
+        balance: wallet.balance || 0,
+        totalEarnings,
+        pendingWithdrawals,
+        thisMonthEarnings,
+        sellerId: wallet.sellerId
+      });
     } catch (error) {
+      console.error('Error in getSellerWallet:', error);
       return response.error(res, error);
     }
   },
@@ -81,10 +134,77 @@ module.exports = {
 
   getAdminWallet: async (req, res) => {
     try {
-      const wallet = await AdminWallet.findOne({}).populate('transactions');
-      if (!wallet) return response.error(res, 'Admin wallet not found');
-      return response.ok(res, wallet);
+      const wallet = await AdminWallet.findOne({});
+      if (!wallet) {
+        // Create admin wallet if it doesn't exist
+        const newWallet = await AdminWallet.create({ balance: 0 });
+        return response.ok(res, {
+          balance: 0,
+          totalCommissionEarned: 0,
+          totalPayoutsMade: 0,
+          pendingWithdrawals: 0,
+          thisMonthCommission: 0,
+          activeSellers: 0
+        });
+      }
+
+      // Calculate total commission earned (all admin credits)
+      const totalCommissionResult = await WalletTransaction.aggregate([
+        { 
+          $match: { 
+            walletType: 'Admin', 
+            type: 'credit' 
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalCommissionEarned = totalCommissionResult[0]?.total || 0;
+
+      // Calculate total payouts made (approved withdrawals)
+      const totalPayoutsResult = await WithdrawalRequest.aggregate([
+        { $match: { status: 'approved' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalPayoutsMade = totalPayoutsResult[0]?.total || 0;
+
+      // Count pending withdrawal requests
+      const pendingWithdrawalsCount = await WithdrawalRequest.countDocuments({ 
+        status: 'pending' 
+      });
+
+      // Calculate this month's commission
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      const thisMonthResult = await WalletTransaction.aggregate([
+        {
+          $match: {
+            walletType: 'Admin',
+            type: 'credit',
+            createdAt: { $gte: startOfMonth }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const thisMonthCommission = thisMonthResult[0]?.total || 0;
+
+      // Count active sellers (verified sellers who are not suspended)
+      const activeSellers = await User.countDocuments({ 
+        role: 'Seller', 
+        status: { $in: ['verified', 'pending'] }
+      });
+
+      return response.ok(res, {
+        balance: wallet.balance || 0,
+        totalCommissionEarned,
+        totalPayoutsMade,
+        pendingWithdrawals: pendingWithdrawalsCount,
+        thisMonthCommission,
+        activeSellers
+      });
     } catch (error) {
+      console.error('Error in getAdminWallet:', error);
       return response.error(res, error);
     }
   },
@@ -449,12 +569,12 @@ module.exports = {
   getAdminStats: async (req, res) => {
     try {
       const totalEarnings = await WalletTransaction.aggregate([
-        { $match: { walletType: 'admin', type: 'credit' } },
+        { $match: { walletType: 'Admin', type: 'credit' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
 
       const totalWithdrawals = await WithdrawalRequest.aggregate([
-        { $match: { status: 'completed' } },
+        { $match: { status: 'approved' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
 
@@ -463,7 +583,10 @@ module.exports = {
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
 
-      const activeSellers = await User.countDocuments({ role: 'seller', isActive: true });
+      const activeSellers = await User.countDocuments({ 
+        role: 'Seller', 
+        status: { $in: ['verified', 'pending'] }
+      });
 
       return response.ok(res, {
         totalEarnings: totalEarnings[0]?.total || 0,

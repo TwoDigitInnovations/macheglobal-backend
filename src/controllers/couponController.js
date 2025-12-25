@@ -86,8 +86,10 @@ module.exports = {
           ]
         };
       } else if (status === 'used') {
+        // Convert userId string to ObjectId for proper matching
+        const mongoose = require('mongoose');
         query = {
-          'usedBy.userId': userId
+          'usedBy.userId': mongoose.Types.ObjectId(userId)
         };
       } else if (status === 'expired') {
         query = {
@@ -112,6 +114,7 @@ module.exports = {
 
       return response.ok(res, filteredCoupons);
     } catch (error) {
+      console.error('Error in getUserCoupons:', error);
       return response.error(res, error);
     }
   },

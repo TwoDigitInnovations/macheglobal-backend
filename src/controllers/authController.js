@@ -137,10 +137,20 @@ module.exports = {
         { expiresIn: process.env.JWT_EXPIRES_IN }
       );
 
+      // Remove password from user object and ensure avatar/profile fields are included
+      const userData = user.toObject();
+      delete userData.password;
+      
+      // Ensure avatar and profile fields are present
+      if (!userData.avatar && !userData.profile) {
+        userData.avatar = '';
+        userData.profile = '';
+      }
+
       return response.ok(res, {
         message: 'Login successful',
         token,
-        user
+        user: userData
       });
     } catch (error) {
       console.error(error);

@@ -298,6 +298,7 @@ exports.createOrder = async (req, res, next) => {
             shippingPrice = 0,
             totalPrice,
             creditUsed = 0,
+            couponCode,
             user: userId
         } = req.body;
 
@@ -308,6 +309,46 @@ exports.createOrder = async (req, res, next) => {
 
         if (!userId) {
             throw new Error('User ID is required');
+        }
+
+        // Handle coupon if provided
+        if (couponCode) {
+            const Coupon = require('../models/Coupon');
+            const coupon = await Coupon.findOne({ 
+                code: couponCode.toUpperCase(),
+                isActive: true 
+            }).session(session);
+
+            if (!coupon) {
+                throw new Error('Invalid coupon code');
+            }
+
+            // Check if user has already used this coupon
+            const userUsage = coupon.usedBy.filter(
+                usage => usage.userId.toString() === userId
+            );
+            
+            if (userUsage.length >= coupon.userUsageLimit) {
+                throw new Error('You have already used this coupon');
+            }
+
+            // Check if coupon is expired
+            const currentDate = new Date();
+            if (coupon.endDate < currentDate) {
+                throw new Error('Coupon has expired');
+            }
+
+            // Check if coupon has started
+            if (coupon.startDate > currentDate) {
+                throw new Error('Coupon is not yet active');
+            }
+
+            // Check usage limit
+            if (coupon.usageLimit && coupon.usageCount >= coupon.usageLimit) {
+                throw new Error('Coupon usage limit reached');
+            }
+
+            console.log(`Applying coupon ${couponCode} to order`);
         }
 
         // Handle credit balance deduction if used
@@ -371,6 +412,7 @@ exports.createOrder = async (req, res, next) => {
             taxPrice,
             shippingPrice,
             totalPrice,
+            couponCode: couponCode || null,
             isPaid: true, // Mark as paid immediately since we're processing payment
             paidAt: Date.now(),
             paymentResult: {
@@ -382,6 +424,25 @@ exports.createOrder = async (req, res, next) => {
         });
 
         const createdOrder = await order.save({ session });
+
+        // Mark coupon as used if provided
+        if (couponCode) {
+            const Coupon = require('../models/Coupon');
+            const coupon = await Coupon.findOne({ 
+                code: couponCode.toUpperCase() 
+            }).session(session);
+
+            if (coupon) {
+                coupon.usedBy.push({
+                    userId: userId,
+                    orderId: createdOrder._id,
+                    usedAt: new Date()
+                });
+                coupon.usageCount += 1;
+                await coupon.save({ session });
+                console.log(`Coupon ${couponCode} marked as used by user ${userId}`);
+            }
+        }
 
         // Create credit transaction if credit was used
         if (creditUsed > 0) {
@@ -880,7 +941,7 @@ exports.updateOrderStatus = async (req, res) => {
 
 exports.getOrdersBySeller = async (req, res, next) => {
     try {
-        const pageSize = 10;
+        const pageSize = parseInt(req.query.limit) || 10;
         const page = Number(req.query.pageNumber) || 1;
         const sellerId = req.params.sellerId;
         const { date, orderId } = req.query;
@@ -922,10 +983,19 @@ exports.getOrdersBySeller = async (req, res, next) => {
 
         // Add date filter if provided
         if (date) {
-            const startDate = new Date(date);
-            startDate.setHours(0, 0, 0, 0);
-            const endDate = new Date(date);
-            endDate.setHours(23, 59, 59, 999);
+            // Parse the date string - expecting YYYY-MM-DD format from frontend
+            const dateStr = date.includes('T') ? date.split('T')[0] : date;
+            
+            // Create date objects for the start and end of the day
+            // Using the date string directly to avoid timezone conversion issues
+            const [year, month, day] = dateStr.split('-').map(Number);
+            
+            const startDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+            const endDate = new Date(year, month - 1, day, 23, 59, 59, 999);
+            
+            console.log(`Date filter for ${dateStr}:`);
+            console.log(`  Start: ${startDate.toISOString()} (Local: ${startDate.toString()})`);
+            console.log(`  End: ${endDate.toISOString()} (Local: ${endDate.toString()})`);
             
             orderQuery.createdAt = {
                 $gte: startDate,
@@ -933,14 +1003,41 @@ exports.getOrdersBySeller = async (req, res, next) => {
             };
         }
 
-        // Add order ID filter if provided
+        // Add order ID filter if provided - search by orderId field, not _id
         if (orderId) {
-            orderQuery._id = orderId;
+            // Try to match orderId field (string) or _id field (ObjectId)
+            if (mongoose.Types.ObjectId.isValid(orderId)) {
+                orderQuery.$or = [
+                    { orderId: { $regex: orderId, $options: 'i' } },
+                    { _id: orderId }
+                ];
+            } else {
+                orderQuery.orderId = { $regex: orderId, $options: 'i' };
+            }
         }
+
+        console.log('Order query:', JSON.stringify(orderQuery, null, 2));
 
         // First, get all order IDs that match our criteria
         const matchingOrderIds = await Order.distinct('_id', orderQuery);
         console.log(`Found ${matchingOrderIds.length} matching orders`);
+        
+        // Debug: If date filter is applied and no results, check what dates exist
+        if (date && matchingOrderIds.length === 0) {
+            const allOrdersForSeller = await Order.find({
+                'orderItems.product': { $in: productIds }
+            }).select('createdAt orderId').sort({ createdAt: -1 }).limit(10);
+            
+            console.log('Recent orders for this seller (for debugging):');
+            allOrdersForSeller.forEach(order => {
+                const orderDate = new Date(order.createdAt);
+                console.log(`  Order ${order.orderId}: ${orderDate.toISOString()} (${orderDate.toLocaleDateString()})`);
+            });
+        }
+
+        // Get total count for pagination
+        const count = matchingOrderIds.length;
+        const pages = Math.ceil(count / pageSize);
 
         // Then get the full order details with pagination
         const orders = await Order.find({ _id: { $in: matchingOrderIds } })
@@ -958,9 +1055,6 @@ exports.getOrdersBySeller = async (req, res, next) => {
             .limit(pageSize)
             .skip(pageSize * (page - 1));
 
-        const count = matchingOrderIds.length;
-        const pages = Math.ceil(count / pageSize);
-
         console.log(`Returning ${orders.length} orders out of ${count} total`);
 
         res.json({
@@ -971,6 +1065,7 @@ exports.getOrdersBySeller = async (req, res, next) => {
             count
         });
     } catch (error) {
+        console.error('Error in getOrdersBySeller:', error);
         next(error);
     }
 };
