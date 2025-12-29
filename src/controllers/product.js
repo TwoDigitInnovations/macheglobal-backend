@@ -31,6 +31,8 @@ module.exports = {
   createProduct: async (req, res) => {
     try {
       const payload = req?.body || {};
+      
+      // Generate unique slug
       const generateSlug = (name) => {
         let slug = name
           .toString()
@@ -38,32 +40,85 @@ module.exports = {
           .trim()
           .replace(/[\s\W-]+/g, '-')
           .replace(/^-+|-+$/g, '');
-
-        slug = `${slug}-abc`;
-
+        
+        // Add random suffix for uniqueness
+        const randomSuffix = Math.random().toString(36).substring(2, 8);
+        slug = `${slug}-${randomSuffix}`;
+        
         return slug;
       };
+      
       payload.slug = generateSlug(payload.name || '');
 
+      // Check for duplicate product
       const existingProduct = await Product.findOne({
         name: payload.name,
         categoryName: payload.categoryName,
-        subCategoryName: payload.subCategoryName
+        subCategoryName: payload.subCategoryName,
+        SellerId: payload.SellerId
       });
 
       if (existingProduct) {
         return res.status(400).json({
           status: false,
-          message:
-            'Product with the same name in this category/subcategory already exists'
+          message: 'Product with the same name in this category/subcategory already exists'
         });
+      }
+
+      // Determine product type and structure data accordingly
+      if (payload.productType === 'simple') {
+        // Simple Product - No variants
+        payload.simpleProduct = {
+          price: payload.price || 0,
+          offerPrice: payload.offerPrice || payload.price || 0,
+          stock: payload.stock || 0,
+          sku: payload.sku || '',
+          images: payload.images || []
+        };
+        payload.variants = [];
+        payload.variantOptions = [];
+        
+      } else if (payload.productType === 'variable' && payload.variants) {
+        // Variable Product - With variants
+        // Validate variants structure
+        if (!Array.isArray(payload.variants) || payload.variants.length === 0) {
+          return res.status(400).json({
+            status: false,
+            message: 'Variable products must have at least one variant'
+          });
+        }
+        
+        // Clear simple product data
+        payload.simpleProduct = undefined;
+        
+      } else {
+        // Legacy support - convert old varients structure to new format
+        if (payload.varients && Array.isArray(payload.varients)) {
+          payload.productType = 'variable';
+          payload.variants = convertLegacyVariants(payload.varients);
+          payload.variantOptions = extractVariantOptions(payload.varients);
+        } else {
+          // Default to simple product
+          payload.productType = 'simple';
+          payload.simpleProduct = {
+            price: payload.price || 0,
+            offerPrice: payload.price || 0,
+            stock: payload.pieces || 0,
+            sku: '',
+            images: payload.image ? [payload.image] : []
+          };
+        }
       }
 
       const newProduct = new Product(payload);
       await newProduct.save();
 
-      return response.ok(res, { message: 'Product added successfully' });
+      return response.ok(res, { 
+        message: 'Product added successfully',
+        product: newProduct
+      });
     } catch (error) {
+      console.error('Error creating product:', error);
       return response.error(res, error);
     }
   },
@@ -71,12 +126,52 @@ module.exports = {
   updateProduct: async (req, res) => {
     try {
       const payload = req?.body || {};
-      let product = await Product.findByIdAndUpdate(payload?.id, payload, {
-        new: true,
-        upsert: true
+      
+      if (!payload.id) {
+        return res.status(400).json({
+          status: false,
+          message: 'Product ID is required'
+        });
+      }
+
+      // Handle product type changes
+      if (payload.productType === 'simple') {
+        // Ensure simple product structure
+        if (payload.simpleProduct) {
+          payload.variants = [];
+          payload.variantOptions = [];
+        }
+      } else if (payload.productType === 'variable') {
+        // Ensure variants exist
+        if (!payload.variants || payload.variants.length === 0) {
+          return res.status(400).json({
+            status: false,
+            message: 'Variable products must have at least one variant'
+          });
+        }
+        payload.simpleProduct = undefined;
+      }
+
+      // Update product
+      const product = await Product.findByIdAndUpdate(
+        payload.id,
+        payload,
+        { new: true, runValidators: true }
+      );
+
+      if (!product) {
+        return res.status(404).json({
+          status: false,
+          message: 'Product not found'
+        });
+      }
+
+      return response.ok(res, { 
+        message: 'Product updated successfully',
+        product 
       });
-      return response.ok(res, product);
     } catch (error) {
+      console.error('Error updating product:', error);
       return response.error(res, error);
     }
   },
@@ -1016,3 +1111,76 @@ getProductById: async (req, res) => {
   }
 };
 
+// Helper Functions for Legacy Support
+function convertLegacyVariants(oldVarients) {
+  const newVariants = [];
+  
+  oldVarients.forEach(varient => {
+    if (varient.selected && Array.isArray(varient.selected)) {
+      varient.selected.forEach(sel => {
+        const attributes = [];
+        
+        // Add color if exists
+        if (varient.color) {
+          attributes.push({ name: 'Color', value: varient.color });
+        }
+        
+        // Add other attributes
+        if (sel.attributes && Array.isArray(sel.attributes)) {
+          sel.attributes.forEach(attr => {
+            if (attr.label && attr.value) {
+              attributes.push({ name: attr.label, value: attr.value });
+            }
+          });
+        }
+        
+        newVariants.push({
+          attributes,
+          images: varient.image || [],
+          price: parseFloat(sel.price) || 0,
+          offerPrice: parseFloat(sel.offerprice) || parseFloat(sel.price) || 0,
+          stock: parseInt(sel.qty) || 0,
+          isActive: true
+        });
+      });
+    }
+  });
+  
+  return newVariants;
+}
+
+function extractVariantOptions(oldVarients) {
+  const optionsMap = {};
+  
+  oldVarients.forEach(varient => {
+    // Extract color
+    if (varient.color) {
+      if (!optionsMap['Color']) {
+        optionsMap['Color'] = new Set();
+      }
+      optionsMap['Color'].add(varient.color);
+    }
+    
+    // Extract other attributes
+    if (varient.selected && Array.isArray(varient.selected)) {
+      varient.selected.forEach(sel => {
+        if (sel.attributes && Array.isArray(sel.attributes)) {
+          sel.attributes.forEach(attr => {
+            if (attr.label && attr.value) {
+              if (!optionsMap[attr.label]) {
+                optionsMap[attr.label] = new Set();
+              }
+              optionsMap[attr.label].add(attr.value);
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  // Convert to array format
+  return Object.keys(optionsMap).map(name => ({
+    name,
+    values: Array.from(optionsMap[name])
+  }));
+}

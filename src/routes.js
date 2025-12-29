@@ -13,6 +13,7 @@ const chatRoutes = require('./routes/chatRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const creditRoutes = require('./routes/creditRoutes');
+const cartSyncRoutes = require('./routes/cartSyncRoutes');
 
 module.exports = (app) => {
   app.use('/api/auth', authRoutes);
@@ -28,6 +29,7 @@ module.exports = (app) => {
   app.use('/api/chat', chatRoutes);
   app.use('/api/invoice', invoiceRoutes);
   app.use('/api/coupon', couponRoutes);
+  app.use('/api', cartSyncRoutes);
   app.use(creditRoutes);
   app.use(orderRoutes);
 };
