@@ -329,8 +329,8 @@ module.exports = {
       // Create withdrawal request
       const request = await WithdrawalRequest.create(withdrawalData);
       
-      // Update seller's wallet balance
-      sellerWallet.balance = parseFloat((sellerWallet.balance - amount).toFixed(2));
+      // DON'T deduct from balance yet - only track as pending
+      // Balance will be deducted when admin approves the withdrawal
       sellerWallet.pendingWithdrawals = parseFloat(((sellerWallet.pendingWithdrawals || 0) + amount).toFixed(2));
       await sellerWallet.save();
       
@@ -408,9 +408,14 @@ module.exports = {
       }
 
       try {
-        // 1. Debit seller's wallet
+        // 1. Debit seller's wallet and reduce pending withdrawals
         console.log('Debiting seller wallet');
         sellerWallet.balance = parseFloat((sellerWallet.balance - request.amount).toFixed(2));
+        sellerWallet.pendingWithdrawals = parseFloat(((sellerWallet.pendingWithdrawals || 0) - request.amount).toFixed(2));
+        // Ensure pendingWithdrawals doesn't go negative
+        if (sellerWallet.pendingWithdrawals < 0) {
+          sellerWallet.pendingWithdrawals = 0;
+        }
         await sellerWallet.save({ session });
 
         // 2. Create a transaction record
@@ -466,6 +471,17 @@ module.exports = {
       
       if (request.status !== 'pending') {
         return response.error(res, `Withdrawal request is already ${request.status}`);
+      }
+
+      // Find seller wallet and restore pending withdrawals
+      const sellerWallet = await SellerWallet.findOne({ sellerId: request.sellerId });
+      if (sellerWallet) {
+        sellerWallet.pendingWithdrawals = parseFloat(((sellerWallet.pendingWithdrawals || 0) - request.amount).toFixed(2));
+        // Ensure pendingWithdrawals doesn't go negative
+        if (sellerWallet.pendingWithdrawals < 0) {
+          sellerWallet.pendingWithdrawals = 0;
+        }
+        await sellerWallet.save();
       }
 
       request.status = 'rejected';
