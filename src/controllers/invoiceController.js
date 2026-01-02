@@ -4,10 +4,59 @@ const User = require('../models/User');
 const fs = require('fs');
 const path = require('path');
 
+// Invoice translations
+const translations = {
+  en: {
+    invoice: 'INVOICE',
+    invoiceNumber: 'Invoice Number',
+    date: 'Date',
+    paymentStatus: 'Payment Status',
+    paid: 'Paid',
+    pending: 'Pending',
+    billTo: 'BILL TO:',
+    shipTo: 'SHIP TO:',
+    item: 'Item',
+    qty: 'Qty',
+    price: 'Price',
+    total: 'Total',
+    subtotal: 'Subtotal:',
+    shipping: 'Shipping:',
+    tax: 'Tax:',
+    grandTotal: 'TOTAL:',
+    paymentMethod: 'Payment Method:',
+    thankYou: 'Thank you for your business!',
+    contact: 'For any queries, contact us at support@macheglobal.com'
+  },
+  fr: {
+    invoice: 'FACTURE',
+    invoiceNumber: 'Numéro de facture',
+    date: 'Date',
+    paymentStatus: 'Statut de paiement',
+    paid: 'Payé',
+    pending: 'En attente',
+    billTo: 'FACTURER À:',
+    shipTo: 'EXPÉDIER À:',
+    item: 'Article',
+    qty: 'Qté',
+    price: 'Prix',
+    total: 'Total',
+    subtotal: 'Sous-total:',
+    shipping: 'Livraison:',
+    tax: 'Taxe:',
+    grandTotal: 'TOTAL:',
+    paymentMethod: 'Mode de paiement:',
+    thankYou: 'Merci pour votre confiance!',
+    contact: 'Pour toute question, contactez-nous à support@macheglobal.com'
+  }
+};
 
 const generateInvoice = async (req, res) => {
   try {
     const { orderId } = req.params;
+    const { lang = 'en' } = req.query; // Get language from query parameter
+    
+    // Get translations for selected language
+    const t = translations[lang] || translations.en;
 
     
     const order = await Order.findById(orderId)
@@ -40,7 +89,7 @@ const generateInvoice = async (req, res) => {
  
     doc.fontSize(20)
        .font('Helvetica-Bold')
-       .text('INVOICE', 400, 50, { align: 'right' });
+       .text(t.invoice, 400, 50, { align: 'right' });
 
     doc.fontSize(10)
        .font('Helvetica')
@@ -52,14 +101,14 @@ const generateInvoice = async (req, res) => {
     doc.moveDown(3);
     doc.fontSize(10)
        .font('Helvetica-Bold')
-       .text(`Invoice Number: ${order.orderId}`, 50, 150)
+       .text(`${t.invoiceNumber}: ${order.orderId}`, 50, 150)
        .font('Helvetica')
-       .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-US', { 
+       .text(`${t.date}: ${new Date(order.createdAt).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-US', { 
          year: 'numeric', 
          month: 'long', 
          day: 'numeric' 
        })}`, 50, 165)
-       .text(`Payment Status: ${order.isPaid ? 'Paid' : 'Pending'}`, 50, 180);
+       .text(`${t.paymentStatus}: ${order.isPaid ? t.paid : t.pending}`, 50, 180);
 
  
     doc.moveTo(50, 200)
@@ -69,7 +118,7 @@ const generateInvoice = async (req, res) => {
  
     doc.fontSize(12)
        .font('Helvetica-Bold')
-       .text('BILL TO:', 50, 220);
+       .text(t.billTo, 50, 220);
 
     doc.fontSize(10)
        .font('Helvetica')
@@ -80,7 +129,7 @@ const generateInvoice = async (req, res) => {
 
     doc.fontSize(12)
        .font('Helvetica-Bold')
-       .text('SHIP TO:', 300, 220);
+       .text(t.shipTo, 300, 220);
 
     doc.fontSize(10)
        .font('Helvetica')
@@ -94,10 +143,10 @@ const generateInvoice = async (req, res) => {
     doc.fontSize(10)
        .font('Helvetica-Bold');
 
-    doc.text('Item', 50, tableTop)
-       .text('Qty', 300, tableTop, { width: 50, align: 'center' })
-       .text('Price', 370, tableTop, { width: 80, align: 'right' })
-       .text('Total', 470, tableTop, { width: 80, align: 'right' });
+    doc.text(t.item, 50, tableTop)
+       .text(t.qty, 300, tableTop, { width: 50, align: 'center' })
+       .text(t.price, 370, tableTop, { width: 80, align: 'right' })
+       .text(t.total, 470, tableTop, { width: 80, align: 'right' });
 
     doc.moveTo(50, tableTop + 15)
        .lineTo(550, tableTop + 15)
@@ -139,14 +188,14 @@ const generateInvoice = async (req, res) => {
     const subtotal = order.itemsPrice || 0;
     doc.fontSize(10)
        .font('Helvetica')
-       .text('Subtotal:', 370, yPosition, { width: 100, align: 'left' })
+       .text(t.subtotal, 370, yPosition, { width: 100, align: 'left' })
        .text(`$${subtotal.toFixed(2)}`, 470, yPosition, { width: 80, align: 'right' });
 
     yPosition += 20;
 
  
     const shipping = order.shippingPrice || 0;
-    doc.text('Shipping:', 370, yPosition, { width: 100, align: 'left' })
+    doc.text(t.shipping, 370, yPosition, { width: 100, align: 'left' })
        .text(`$${shipping.toFixed(2)}`, 470, yPosition, { width: 80, align: 'right' });
 
     yPosition += 20;
@@ -154,7 +203,7 @@ const generateInvoice = async (req, res) => {
    
     const tax = order.taxPrice || 0;
     if (tax > 0) {
-      doc.text('Tax:', 370, yPosition, { width: 100, align: 'left' })
+      doc.text(t.tax, 370, yPosition, { width: 100, align: 'left' })
          .text(`$${tax.toFixed(2)}`, 470, yPosition, { width: 80, align: 'right' });
       yPosition += 20;
     }
@@ -174,7 +223,7 @@ const generateInvoice = async (req, res) => {
     const grandTotal = order.totalPrice || (subtotal + shipping + tax);
     doc.fontSize(12)
        .font('Helvetica-Bold')
-       .text('TOTAL:', 370, yPosition, { width: 100, align: 'left' })
+       .text(t.grandTotal, 370, yPosition, { width: 100, align: 'left' })
        .fillColor('#FF7000')
        .text(`$${grandTotal.toFixed(2)}`, 470, yPosition, { width: 80, align: 'right' })
        .fillColor('#000');
@@ -183,15 +232,15 @@ const generateInvoice = async (req, res) => {
     yPosition += 40;
     doc.fontSize(10)
        .font('Helvetica-Bold')
-       .text('Payment Method:', 50, yPosition)
+       .text(t.paymentMethod, 50, yPosition)
        .font('Helvetica')
        .text(order.paymentMethod || 'N/A', 150, yPosition);
 
    
     doc.fontSize(9)
        .font('Helvetica')
-       .text('Thank you for your business!', 50, 750, { align: 'center', width: 500 })
-       .text('For any queries, contact us at support@macheglobal.com', 50, 765, { align: 'center', width: 500 });
+       .text(t.thankYou, 50, 750, { align: 'center', width: 500 })
+       .text(t.contact, 50, 765, { align: 'center', width: 500 });
 
     // Finalize PDF
     doc.end();

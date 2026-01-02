@@ -8,6 +8,7 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Favourite = require('../models/Favorite');
 const Review = require('../models/Review');
+const ProductRequest = require('../models/product-request');
 
 const response = require('../../responses');
 const _ = require('lodash');
@@ -55,7 +56,8 @@ module.exports = {
         name: payload.name,
         categoryName: payload.categoryName,
         subCategoryName: payload.subCategoryName,
-        SellerId: payload.SellerId
+        SellerId: payload.SellerId,
+        isDeleted: false
       });
 
       if (existingProduct) {
@@ -68,15 +70,23 @@ module.exports = {
       // Determine product type and structure data accordingly
       if (payload.productType === 'simple') {
         // Simple Product - No variants
-        payload.simpleProduct = {
-          price: payload.price || 0,
-          offerPrice: payload.offerPrice || payload.price || 0,
-          stock: payload.stock || 0,
-          sku: payload.sku || '',
-          images: payload.images || []
-        };
-        payload.variants = [];
-        payload.variantOptions = [];
+        // Check if simpleProduct data is already structured
+        if (payload.simpleProduct) {
+          // Data is already in correct format from frontend
+          payload.variants = [];
+          payload.variantOptions = [];
+        } else {
+          // Legacy format - structure it
+          payload.simpleProduct = {
+            price: payload.price || 0,
+            offerPrice: payload.offerPrice || payload.price || 0,
+            stock: payload.stock || 0,
+            sku: payload.sku || '',
+            images: payload.images || []
+          };
+          payload.variants = [];
+          payload.variantOptions = [];
+        }
         
       } else if (payload.productType === 'variable' && payload.variants) {
         // Variable Product - With variants
@@ -193,7 +203,8 @@ module.exports = {
         ];
       }
 
-      if (req.query.SellerId) {
+      // Only add SellerId to query if it's a valid value (not undefined or "undefined" string)
+      if (req.query.SellerId && req.query.SellerId !== 'undefined') {
         cond.SellerId = req.query.SellerId;
       }
 
@@ -201,6 +212,9 @@ module.exports = {
       if (req.query.is_manufacturer_product !== undefined) {
         cond.is_manufacturer_product = req.query.is_manufacturer_product === 'true';
       }
+
+      // Filter out deleted products
+      cond.isDeleted = false;
 
       let products = await Product.find(cond)
         .populate('category')
@@ -249,6 +263,9 @@ module.exports = {
         ];
       }
 
+      // Filter out deleted products
+      cond.isDeleted = false;
+
       let products = await Product.find(cond)
         .populate('category')
         .sort({ createdAt: -1 })
@@ -276,7 +293,8 @@ module.exports = {
   getProductBySlug: async (req, res) => {
     try {
       const product = await Product.findOne({
-        slug: req?.query?.slug
+        slug: req?.query?.slug,
+        isDeleted: false
       }).populate('category');
 
       let reviews = await Review.find({ product: product._id }).populate(
@@ -308,7 +326,7 @@ module.exports = {
 
 getProductById: async (req, res) => {
   try {
-    const product = await Product.findOne({ _id: req.params.id })
+    const product = await Product.findOne({ _id: req.params.id, isDeleted: false })
       .populate('category Brand SellerId'); // Added SellerId to populate
      
     if (!product) {
@@ -372,6 +390,9 @@ getProductById: async (req, res) => {
       }
 
       console.log(cond);
+
+      // Filter out deleted products
+      cond.isDeleted = false;
 
       let skip = (req.query.page - 1) * req.query.limit;
 
@@ -441,7 +462,7 @@ getProductById: async (req, res) => {
 
   getProductbycategory: async (req, res) => {
     try {
-      let product = await Product.find({ category: req.params.id }).populate(
+      let product = await Product.find({ category: req.params.id, isDeleted: false }).populate(
         'category'
       );
       return response.ok(res, product);
@@ -453,6 +474,7 @@ getProductById: async (req, res) => {
   productSearch: async (req, res) => {
     try {
       let cond = {
+        isDeleted: false,
         $or: [
           { name: { $regex: req.query.key, $options: 'i' } },
           { brandName: { $regex: req.query.key, $options: 'i' } },
@@ -469,7 +491,7 @@ getProductById: async (req, res) => {
 
   topselling: async (req, res) => {
     try {
-      let product = await Product.find({ is_top: true }).sort({
+      let product = await Product.find({ is_top: true, isDeleted: false }).sort({
         updatedAt: -1
       });
       return response.ok(res, product);
@@ -504,8 +526,8 @@ getProductById: async (req, res) => {
         await FlashSale.deleteMany({ product: productId });
       }
 
-      // Delete the product
-      await Product.findByIdAndDelete(productId);
+      // Soft delete the product
+      await Product.findByIdAndUpdate(productId, { isDeleted: true });
       
       return response.ok(res, { 
         message: flashSales.length > 0 
@@ -739,7 +761,7 @@ getProductById: async (req, res) => {
       console.log('Viewing orders for seller:', sellerId);
       
       // Get all product IDs for this seller
-      const sellerProducts = await Product.find({ SellerId: sellerId }, '_id');
+      const sellerProducts = await Product.find({ SellerId: sellerId, isDeleted: false }, '_id');
       console.log('Seller products count:', sellerProducts.length);
       
       if (!sellerProducts || sellerProducts.length === 0) {
@@ -938,17 +960,19 @@ getProductById: async (req, res) => {
       const start = new Date(`${year}-01-01`);
       const end = new Date(`${year + 1}-01-01`);
 
-      const sales = await ProductRequest.aggregate([
+      // Use Order model instead of ProductRequest
+      const sales = await Order.aggregate([
         {
           $match: {
-            createdAt: { $gte: start, $lt: end } 
+            createdAt: { $gte: start, $lt: end },
+            isPaid: true  // Only count paid orders
           }
         },
         {
           $group: {
             _id: { $month: '$createdAt' },
             totalSales: {
-              $sum: { $toDouble: '$total' }
+              $sum: '$totalPrice'
             }
           }
         },
@@ -982,7 +1006,7 @@ getProductById: async (req, res) => {
   getTopSoldProduct: async (req, res) => {
     try {
       const { page = 1, limit = 10 } = req.query;
-      const products = await Product.find()
+      const products = await Product.find({ isDeleted: false })
         .sort({ sold_pieces: -1 })
         .limit(limit * 1)
         .skip((page - 1) * limit);
@@ -996,7 +1020,7 @@ getProductById: async (req, res) => {
     try {
       const { page = 1, limit = 10 } = req.query;
 
-      const products = await Product.find({ pieces: { $lt: 20 } })
+      const products = await Product.find({ pieces: { $lt: 20 }, isDeleted: false })
         .sort({ pieces: 1 })
         .limit(Number(limit))
         .skip((page - 1) * limit);
@@ -1009,46 +1033,139 @@ getProductById: async (req, res) => {
 
   getDashboardStats: async (req, res) => {
     try {
+      console.log('=== Admin Dashboard Stats Debug ===');
+      
+      // Admin dashboard stats
       // Get total sales (sum of all paid orders)
       const [totalSalesData] = await Order.aggregate([
         { $match: { isPaid: true } },
         { $group: { _id: null, total: { $sum: '$totalPrice' } } }
       ]);
+      console.log('Total sales:', totalSalesData?.total || 0);
 
-      // Get count of pending orders
+      // Get count of pending orders (orders that are paid but not yet delivered)
+      // This includes: pending, processing, and shipped orders
       const pendingOrdersCount = await Order.countDocuments({ 
-        status: { $in: ['pending', 'processing'] } 
+        isPaid: true,
+        isDelivered: false,
+        status: { $nin: ['cancelled', 'returned'] }
       });
+      
+      // Debug: Check all order statuses
+      const allOrders = await Order.find({});
+      const statusCounts = {};
+      const paidNotDelivered = allOrders.filter(o => o.isPaid && !o.isDelivered && !['cancelled', 'returned'].includes(o.status)).length;
+      allOrders.forEach(order => {
+        const key = `${order.status} (paid:${order.isPaid}, delivered:${order.isDelivered})`;
+        statusCounts[key] = (statusCounts[key] || 0) + 1;
+      });
+      console.log('Total orders:', allOrders.length);
+      console.log('Paid but not delivered (excluding cancelled/returned):', paidNotDelivered);
+      console.log('Order status breakdown:', statusCounts);
+      console.log('Pending orders count (query result):', pendingOrdersCount);
 
-      // Get total products in stock
-      const [productsInStock] = await Product.aggregate([
-        { $group: { _id: null, total: { $sum: '$stock' } } }
-      ]);
+      // Get total products in stock (calculate from both simple and variant products)
+      // First check if products exist at all
+      const allProductsCount = await Product.countDocuments({});
+      const deletedProductsCount = await Product.countDocuments({ isDeleted: true });
+      const notDeletedProductsCount = await Product.countDocuments({ isDeleted: false });
+      const undefinedDeletedCount = await Product.countDocuments({ isDeleted: { $exists: false } });
+      
+      console.log('All products:', allProductsCount);
+      console.log('Deleted products:', deletedProductsCount);
+      console.log('Not deleted products:', notDeletedProductsCount);
+      console.log('Products without isDeleted field:', undefinedDeletedCount);
+      
+      // Query products that are not deleted OR don't have isDeleted field
+      const products = await Product.find({ 
+        $or: [
+          { isDeleted: false },
+          { isDeleted: { $exists: false } }
+        ]
+      });
+      let totalStock = 0;
+      let simpleCount = 0, variableCount = 0, legacyCount = 0;
+      
+      console.log('Total products found:', products.length);
+      
+      let productTypeBreakdown = { simple: 0, variable: 0, legacy: 0, unknown: 0 };
+      
+      products.forEach((product, index) => {
+        let productStock = 0;
+        let productType = 'unknown';
+        
+        if (product.productType === 'simple' && product.simpleProduct) {
+          const stock = product.simpleProduct.stock || 0;
+          // If simpleProduct.stock is 0, fallback to pieces field
+          const finalStock = stock > 0 ? stock : (product.pieces || 0);
+          totalStock += finalStock;
+          productStock = finalStock;
+          productType = 'simple';
+          if (finalStock > 0) simpleCount++;
+        } else if (product.productType === 'variable' && product.variants && product.variants.length > 0) {
+          product.variants.forEach(variant => {
+            const stock = variant.stock || 0;
+            totalStock += stock;
+            productStock += stock;
+          });
+          productType = 'variable';
+          if (product.variants.some(v => v.stock > 0)) variableCount++;
+        } else if (product.pieces !== undefined && product.pieces !== null) {
+          // Legacy support
+          const stock = product.pieces || 0;
+          totalStock += stock;
+          productStock = stock;
+          productType = 'legacy';
+          if (stock > 0) legacyCount++;
+        }
+        
+        productTypeBreakdown[productType]++;
+        
+        // Log first 5 products for debugging
+        if (index < 5) {
+          console.log(`Product ${index + 1}: ${product.name}`);
+          console.log(`  - Type: ${product.productType || 'undefined'}`);
+          console.log(`  - Detected as: ${productType}`);
+          console.log(`  - Stock: ${productStock}`);
+          console.log(`  - Has simpleProduct: ${!!product.simpleProduct}`);
+          console.log(`  - Has variants: ${product.variants?.length || 0}`);
+          console.log(`  - Has pieces: ${product.pieces !== undefined ? product.pieces : 'undefined'}`);
+        }
+      });
+      
+      console.log('Product type breakdown:', productTypeBreakdown);
+      console.log('Stock breakdown - Simple:', simpleCount, 'Variable:', variableCount, 'Legacy:', legacyCount);
+      console.log('Total stock calculated:', totalStock);
 
-      // Get total earnings (from admin wallet credits)
+      // Get total earnings (admin commission from wallet)
       const [earningsData] = await WalletTransaction.aggregate([
-        { $match: { walletType: 'admin', type: 'credit' } },
+        { $match: { walletType: 'Admin', type: 'credit' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
+      console.log('Admin earnings:', earningsData?.total || 0);
 
       // Get count of refund requests
       const refundRequestsCount = await Order.countDocuments({
         status: 'refund_requested'
       });
 
-      // Get count of completed payouts
-      const payoutsCompleted = await WithdrawalRequest.countDocuments({
-        status: 'completed'
-      });
+      // Get total amount of completed/approved payouts
+      const [payoutsCompletedData] = await WithdrawalRequest.aggregate([
+        { $match: { status: { $in: ['approved', 'completed'] } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
 
       const stats = {
         totalSales: totalSalesData?.total || 0,
         pendingOrders: pendingOrdersCount,
-        productsInStock: productsInStock?.total || 0,
+        productsInStock: totalStock,
         earnings: earningsData?.total || 0,
         refundRequests: refundRequestsCount,
-        payoutsCompleted: payoutsCompleted
+        payoutsCompleted: payoutsCompletedData?.total || 0
       };
+
+      console.log('Final stats:', stats);
+      console.log('=== End Debug ===');
 
       return response.ok(res, stats);
     } catch (error) {
@@ -1086,6 +1203,9 @@ getProductById: async (req, res) => {
       // get all categories
       const categories = await Category.find();
 
+      // Filter out deleted products
+      cond.isDeleted = false;
+
       const result = await Promise.all(
         categories.map(async (cat) => {
           const products = await Product.find({
@@ -1107,6 +1227,120 @@ getProductById: async (req, res) => {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ status: false, message: error.message });
+    }
+  },
+
+  getSellerDashboardStats: async (req, res) => {
+    try {
+      const sellerId = req.user?.id;
+      console.log('=== Seller Dashboard Stats ===');
+      console.log('Seller ID:', sellerId);
+      
+      // Get seller's products
+      const sellerProducts = await Product.find({ 
+        SellerId: sellerId,
+        $or: [
+          { isDeleted: false },
+          { isDeleted: { $exists: false } }
+        ]
+      });
+      
+      const productIds = sellerProducts.map(p => p._id);
+      console.log('Seller products count:', sellerProducts.length);
+      
+      // Calculate total stock for seller's products
+      let totalStock = 0;
+      sellerProducts.forEach(product => {
+        if (product.productType === 'simple' && product.simpleProduct) {
+          const stock = product.simpleProduct.stock || 0;
+          // If simpleProduct.stock is 0, fallback to pieces field
+          const finalStock = stock > 0 ? stock : (product.pieces || 0);
+          totalStock += finalStock;
+        } else if (product.productType === 'variable' && product.variants) {
+          product.variants.forEach(variant => {
+            totalStock += variant.stock || 0;
+          });
+        } else if (product.pieces !== undefined && product.pieces !== null) {
+          totalStock += product.pieces || 0;
+        }
+      });
+      console.log('Seller total stock:', totalStock);
+      
+      // Get seller's orders (orders containing seller's products)
+      const sellerOrders = await Order.find({
+        'orderItems.product': { $in: productIds },
+        isPaid: true
+      });
+      
+      // Calculate total sales from seller's products
+      let totalSales = 0;
+      sellerOrders.forEach(order => {
+        order.orderItems.forEach(item => {
+          if (productIds.some(id => id.equals(item.product))) {
+            totalSales += item.price * item.qty;
+          }
+        });
+      });
+      console.log('Seller total sales:', totalSales);
+      
+      // Get pending orders for seller
+      const pendingOrdersCount = await Order.countDocuments({
+        'orderItems.product': { $in: productIds },
+        isPaid: true,
+        isDelivered: false,
+        status: { $nin: ['cancelled', 'returned'] }
+      });
+      console.log('Seller pending orders:', pendingOrdersCount);
+      
+      // Get seller's earnings from wallet
+      const [earningsData] = await WalletTransaction.aggregate([
+        { 
+          $match: { 
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            type: 'credit',
+            status: 'completed'
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const earnings = earningsData?.total || 0;
+      console.log('Seller earnings:', earnings);
+      
+      // Get refund requests for seller's products
+      const refundRequestsCount = await Order.countDocuments({
+        'orderItems.product': { $in: productIds },
+        status: 'refund_requested'
+      });
+      
+      // Get seller's completed payouts
+      const [payoutsCompletedData] = await WithdrawalRequest.aggregate([
+        { 
+          $match: { 
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            status: { $in: ['approved', 'completed'] } 
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const payoutsCompleted = payoutsCompletedData?.total || 0;
+      console.log('Seller payouts completed:', payoutsCompleted);
+      
+      const stats = {
+        totalSales,
+        pendingOrders: pendingOrdersCount,
+        productsInStock: totalStock,
+        earnings,
+        refundRequests: refundRequestsCount,
+        payoutsCompleted
+      };
+      
+      console.log('Seller final stats:', stats);
+      console.log('=== End Seller Dashboard Stats ===');
+      
+      return response.ok(res, stats);
+    } catch (error) {
+      console.error('Error in getSellerDashboardStats:', error);
+      return response.error(res, 'Failed to fetch seller dashboard statistics');
     }
   }
 };

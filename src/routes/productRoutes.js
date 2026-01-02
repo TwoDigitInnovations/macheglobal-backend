@@ -26,6 +26,7 @@ router.get('/getMonthlySales', product.getMonthlySales);
 router.get('/getTopSoldProduct', product.getTopSoldProduct);
 router.get('/getLowStockProduct', product.getLowStockProduct);
 router.get('/dashboard-stats', product.getDashboardStats);
+router.get('/seller-dashboard-stats', authenticate, product.getSellerDashboardStats);
 router.get('/getManufacturerProducts', product.getManufacturerProducts);
 
 module.exports = router;

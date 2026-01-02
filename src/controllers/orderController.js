@@ -425,6 +425,39 @@ exports.createOrder = async (req, res, next) => {
 
         const createdOrder = await order.save({ session });
 
+        // Deduct stock for ordered items
+        const Product = require('../models/product');
+        for (const item of orderItems) {
+            const product = await Product.findById(item.product).session(session);
+            
+            if (product) {
+                // Check if it's a variable product with variants
+                if (product.productType === 'variable' && item.selectedAttributes) {
+                    // Find the matching variant
+                    const variantIndex = product.variants.findIndex(v => 
+                        JSON.stringify(v.attributes) === JSON.stringify(item.selectedAttributes)
+                    );
+                    
+                    if (variantIndex !== -1 && product.variants[variantIndex]) {
+                        // Deduct stock from variant
+                        product.variants[variantIndex].stock -= item.qty;
+                        console.log(`Deducted ${item.qty} from variant stock. New stock: ${product.variants[variantIndex].stock}`);
+                    }
+                } else {
+                    // Simple product - deduct from simpleProduct.stock or pieces
+                    if (product.simpleProduct && product.simpleProduct.stock !== undefined) {
+                        product.simpleProduct.stock -= item.qty;
+                        console.log(`Deducted ${item.qty} from simpleProduct stock. New stock: ${product.simpleProduct.stock}`);
+                    } else if (product.pieces !== undefined) {
+                        product.pieces -= item.qty;
+                        console.log(`Deducted ${item.qty} from pieces. New pieces: ${product.pieces}`);
+                    }
+                }
+                
+                await product.save({ session });
+            }
+        }
+
         // Mark coupon as used if provided
         if (couponCode) {
             const Coupon = require('../models/Coupon');
@@ -914,6 +947,39 @@ exports.updateOrderStatus = async (req, res) => {
             // Mark order as refunded
             order.refundedToCredit = true;
             order.refundAmount = refundAmount;
+
+            // Restore stock for cancelled/returned orders
+            const Product = require('../models/product');
+            for (const item of order.orderItems) {
+                const product = await Product.findById(item.product).session(session);
+                
+                if (product) {
+                    // Check if it's a variable product with variants
+                    if (product.productType === 'variable' && item.selectedAttributes) {
+                        // Find the matching variant
+                        const variantIndex = product.variants.findIndex(v => 
+                            JSON.stringify(v.attributes) === JSON.stringify(item.selectedAttributes)
+                        );
+                        
+                        if (variantIndex !== -1 && product.variants[variantIndex]) {
+                            // Restore stock to variant
+                            product.variants[variantIndex].stock += item.qty;
+                            console.log(`Restored ${item.qty} to variant stock. New stock: ${product.variants[variantIndex].stock}`);
+                        }
+                    } else {
+                        // Simple product - restore to simpleProduct.stock or pieces
+                        if (product.simpleProduct && product.simpleProduct.stock !== undefined) {
+                            product.simpleProduct.stock += item.qty;
+                            console.log(`Restored ${item.qty} to simpleProduct stock. New stock: ${product.simpleProduct.stock}`);
+                        } else if (product.pieces !== undefined) {
+                            product.pieces += item.qty;
+                            console.log(`Restored ${item.qty} to pieces. New pieces: ${product.pieces}`);
+                        }
+                    }
+                    
+                    await product.save({ session });
+                }
+            }
 
             console.log(`Refunded ${refundAmount} to user ${user._id} credit balance for order ${order._id}`);
         }

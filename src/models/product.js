@@ -116,7 +116,10 @@ const productSchema = new mongoose.Schema(
     varients: { type: [] },  // Old structure
     parameter_type: { type: String },
     Attribute: [],
-    price_slot: []
+    price_slot: [],
+    
+    // Soft Delete
+    isDeleted: { type: Boolean, default: false }
   },
   {
     timestamps: true

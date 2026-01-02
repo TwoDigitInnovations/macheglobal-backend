@@ -57,9 +57,15 @@ module.exports = {
         status: 'ACTIVE',
         startDateTime: { $lte: now },
         endDateTime: { $gt: now }
-      }).populate('product');
+      }).populate({
+        path: 'product',
+        match: { isDeleted: false } // Only populate products that are not deleted
+      });
 
-      return response.ok(res, activeFlashSales);
+      // Filter out flash sales where product is null (deleted products)
+      const validFlashSales = activeFlashSales.filter(sale => sale.product !== null);
+
+      return response.ok(res, validFlashSales);
     } catch (error) {
       return response.error(res, error);
     }

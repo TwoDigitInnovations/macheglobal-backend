@@ -6,10 +6,28 @@ const ErrorResponse = require('../utils/errorResponse');
 
 exports.getUserNotifications = async (req, res, next) => {
   try {
-    const notifications = await Notification.find({ user: req.user.id })
+    let notifications = await Notification.find({ user: req.user.id })
       .sort({ createdAt: -1 })
       .populate('order')
       .populate('suggestedProducts');
+
+    // Filter out deleted products from suggestedProducts after population
+    notifications = await Promise.all(notifications.map(async (notification) => {
+      if (notification.suggestedProducts && notification.suggestedProducts.length > 0) {
+        // Double check each product in database to ensure it's not deleted
+        const validProducts = [];
+        for (const product of notification.suggestedProducts) {
+          if (product) {
+            const dbProduct = await Product.findById(product._id);
+            if (dbProduct && dbProduct.isDeleted !== true) {
+              validProducts.push(product);
+            }
+          }
+        }
+        notification.suggestedProducts = validProducts;
+      }
+      return notification;
+    }));
 
     res.status(200).json({
       success: true,
@@ -69,9 +87,17 @@ exports.createOrderNotification = async (orderId, userId, session = null) => {
       // If we get here, we found the order
       console.log(`Found order ${orderId} after ${retryCount + 1} attempt(s)`);
       
-      // Get 4 random products as suggestions (excluding ordered items)
+      // Get 4 random products as suggestions (excluding ordered items and deleted products)
       const suggestedProducts = await Product.aggregate([
-        { $match: { _id: { $nin: order.orderItems.map(item => item.product._id) } } },
+        { 
+          $match: { 
+            _id: { $nin: order.orderItems.map(item => item.product._id) },
+            $or: [
+              { isDeleted: false },
+              { isDeleted: { $exists: false } }
+            ]
+          } 
+        },
         { $sample: { size: 4 } }
       ]);
 

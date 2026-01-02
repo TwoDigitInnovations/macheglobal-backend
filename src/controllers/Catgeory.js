@@ -156,7 +156,7 @@ module.exports = {
 
   getCategories: async (req, res) => {
     try {
-      const categories = await Category.find({});
+      const categories = await Category.find();
       return response.ok(res, categories);
     } catch (error) {
       return response.error(res, error);
