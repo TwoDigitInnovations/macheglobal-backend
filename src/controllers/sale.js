@@ -41,7 +41,7 @@ module.exports = {
       const flashSales = await FlashSale.find({ SellerId: SellerId })
         .populate({
           path: 'product',
-          select: 'name categoryName varients sellerId'
+          select: 'name categoryName varients simpleProduct sellerId'
         })
         .sort({ createdAt: -1 });
       return response.ok(res, flashSales);
@@ -59,7 +59,8 @@ module.exports = {
         endDateTime: { $gt: now }
       }).populate({
         path: 'product',
-        match: { isDeleted: false } // Only populate products that are not deleted
+        match: { isDeleted: false }, // Only populate products that are not deleted
+        select: 'name categoryName varients simpleProduct slug sellerId' // Explicitly include simpleProduct
       });
 
       // Filter out flash sales where product is null (deleted products)
