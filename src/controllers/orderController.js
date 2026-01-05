@@ -433,15 +433,34 @@ exports.createOrder = async (req, res, next) => {
             if (product) {
                 // Check if it's a variable product with variants
                 if (product.productType === 'variable' && item.selectedAttributes) {
-                    // Find the matching variant
-                    const variantIndex = product.variants.findIndex(v => 
-                        JSON.stringify(v.attributes) === JSON.stringify(item.selectedAttributes)
-                    );
+                    // Find the matching variant using order-independent comparison
+                    const variantIndex = product.variants.findIndex(v => {
+                        if (!v.attributes || !Array.isArray(v.attributes)) return false;
+                        if (!item.selectedAttributes || !Array.isArray(item.selectedAttributes)) return false;
+                        
+                        // Check if all attributes match (order-independent)
+                        const allMatch = item.selectedAttributes.every(itemAttr => 
+                            v.attributes.some(variantAttr => 
+                                variantAttr.name === itemAttr.name && variantAttr.value === itemAttr.value
+                            )
+                        );
+                        
+                        const noExtra = v.attributes.every(variantAttr =>
+                            item.selectedAttributes.some(itemAttr =>
+                                itemAttr.name === variantAttr.name && itemAttr.value === variantAttr.value
+                            )
+                        );
+                        
+                        return allMatch && noExtra;
+                    });
                     
                     if (variantIndex !== -1 && product.variants[variantIndex]) {
                         // Deduct stock from variant
+                        const oldStock = product.variants[variantIndex].stock;
                         product.variants[variantIndex].stock -= item.qty;
-                        console.log(`Deducted ${item.qty} from variant stock. New stock: ${product.variants[variantIndex].stock}`);
+                        console.log(`Deducted ${item.qty} from variant ${variantIndex} stock. Old: ${oldStock}, New: ${product.variants[variantIndex].stock}`);
+                    } else {
+                        console.warn(`No matching variant found for product ${item.product}. Attributes:`, item.selectedAttributes);
                     }
                 } else {
                     // Simple product - deduct from simpleProduct.stock or pieces
@@ -956,15 +975,34 @@ exports.updateOrderStatus = async (req, res) => {
                 if (product) {
                     // Check if it's a variable product with variants
                     if (product.productType === 'variable' && item.selectedAttributes) {
-                        // Find the matching variant
-                        const variantIndex = product.variants.findIndex(v => 
-                            JSON.stringify(v.attributes) === JSON.stringify(item.selectedAttributes)
-                        );
+                        // Find the matching variant using order-independent comparison
+                        const variantIndex = product.variants.findIndex(v => {
+                            if (!v.attributes || !Array.isArray(v.attributes)) return false;
+                            if (!item.selectedAttributes || !Array.isArray(item.selectedAttributes)) return false;
+                            
+                            // Check if all attributes match (order-independent)
+                            const allMatch = item.selectedAttributes.every(itemAttr => 
+                                v.attributes.some(variantAttr => 
+                                    variantAttr.name === itemAttr.name && variantAttr.value === itemAttr.value
+                                )
+                            );
+                            
+                            const noExtra = v.attributes.every(variantAttr =>
+                                item.selectedAttributes.some(itemAttr =>
+                                    itemAttr.name === variantAttr.name && itemAttr.value === variantAttr.value
+                                )
+                            );
+                            
+                            return allMatch && noExtra;
+                        });
                         
                         if (variantIndex !== -1 && product.variants[variantIndex]) {
                             // Restore stock to variant
+                            const oldStock = product.variants[variantIndex].stock;
                             product.variants[variantIndex].stock += item.qty;
-                            console.log(`Restored ${item.qty} to variant stock. New stock: ${product.variants[variantIndex].stock}`);
+                            console.log(`Restored ${item.qty} to variant ${variantIndex} stock. Old: ${oldStock}, New: ${product.variants[variantIndex].stock}`);
+                        } else {
+                            console.warn(`No matching variant found for product ${item.product} during stock restoration. Attributes:`, item.selectedAttributes);
                         }
                     } else {
                         // Simple product - restore to simpleProduct.stock or pieces

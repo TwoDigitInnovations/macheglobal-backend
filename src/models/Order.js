@@ -64,11 +64,24 @@ const orderSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    paymentGateway: {
+        type: String,
+        enum: ['icone_eht', 'stripe', 'moncash', 'manual'],
+        default: 'manual'
+    },
+    paymentStatus: {
+        type: String,
+        enum: ['pending', 'completed', 'failed', 'expired', 'cancelled'],
+        default: 'pending'
+    },
     paymentResult: {
         id: { type: String },
         status: { type: String },
         update_time: { type: String },
-        email_address: { type: String }
+        email_address: { type: String },
+        gateway: { type: String },
+        amount: { type: Number },
+        currency: { type: String }
     },
     itemsPrice: {
         type: Number,
