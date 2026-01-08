@@ -13,12 +13,36 @@ const getConversations = async (req, res) => {
     })
       .sort({ lastMessageTime: -1 })
       .populate('participants', 'name image')
-      .populate('productId', 'name image');
+      .populate('productId', 'name');
 
-    const formattedConversations = conversations.map((conv) => {
+    // Get product details for each conversation
+    const formattedConversations = await Promise.all(conversations.map(async (conv) => {
       const otherParticipant = conv.participants.find(
         (p) => p._id.toString() !== userId
       );
+
+      let productImage = null;
+      let productPrice = null;
+      
+      // If conversation has a productId, get the latest message with product details
+      if (conv.productId) {
+        const latestMessageWithProduct = await Message.findOne({
+          $or: [
+            { senderId: userId, receiverId: otherParticipant._id },
+            { senderId: otherParticipant._id, receiverId: userId }
+          ],
+          productId: conv.productId._id,
+          $or: [
+            { productImage: { $exists: true, $ne: null } },
+            { productPrice: { $exists: true, $ne: null } }
+          ]
+        }).sort({ timestamp: -1 });
+
+        if (latestMessageWithProduct) {
+          productImage = latestMessageWithProduct.productImage;
+          productPrice = latestMessageWithProduct.productPrice;
+        }
+      }
 
       return {
         conversationId: conv._id,
@@ -31,11 +55,13 @@ const getConversations = async (req, res) => {
         customerImage: otherParticipant.image,
         productId: conv.productId?._id,
         productName: conv.productId?.name,
+        productImage: productImage,
+        productPrice: productPrice,
         lastMessage: conv.lastMessage,
         lastMessageTime: conv.lastMessageTime,
         unreadCount: conv.unreadCount?.get(userId) || 0
       };
-    });
+    }));
 
     res.json({
       status: true,

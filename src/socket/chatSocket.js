@@ -57,17 +57,26 @@ const setupChatSocket = (io) => {
         });
 
       
-        const messages = await Message.find({
+        // Build query for messages
+        // If productId is provided, show:
+        // 1. Messages for that specific product
+        // 2. Messages without any productId (general chat)
+        const messageQuery = {
           $or: [
             { senderId: userId, receiverId: sellerId },
             { senderId: sellerId, receiverId: userId }
-          ],
-          ...(productId && { productId })
-        })
-        .sort({ timestamp: 1 })
-        .limit(50);
+          ]
+        };
+        
+        // Don't filter by productId - show all messages between these users
+        // This way, when user sends inquiry, they can see previous conversation
+        
+        const messages = await Message.find(messageQuery)
+          .sort({ timestamp: -1 }) // Sort descending (latest first)
+          .limit(200) // Increased limit for more history
+          .then(msgs => msgs.reverse()); // Reverse to get chronological order
 
-        console.log('📥 [JOIN] Sending previous messages:', messages.length, 'messages');
+        console.log('📥 [JOIN] Sending previous messages:', messages.length, 'messages (all products)');
         socket.emit('previousMessages', messages);
 
       
@@ -198,6 +207,34 @@ const setupChatSocket = (io) => {
     socket.on('stopTyping', ({ userId, receiverId }) => {
       const roomId = [userId, receiverId].sort().join('_');
       socket.to(roomId).emit('stopTyping', { userId });
+    });
+
+    // Handle messages read event
+    socket.on('messagesRead', async ({ userId, otherUserId, productId }) => {
+      try {
+        console.log('✅ [READ] Messages marked as read:', { userId, otherUserId, productId });
+        
+        // Update conversation unread count
+        const conversation = await Conversation.findOne({
+          participants: { $all: [userId, otherUserId] }
+        });
+        
+        if (conversation) {
+          conversation.unreadCount.set(userId, 0);
+          await conversation.save();
+          
+          // Emit badge update to the user who read the messages
+          const userSocketId = userSockets.get(userId);
+          if (userSocketId) {
+            io.to(userSocketId).emit('badgeUpdate', {
+              userId: userId,
+              unreadCount: 0
+            });
+          }
+        }
+      } catch (error) {
+        console.error('❌ [READ] Error handling messages read:', error);
+      }
     });
 
   

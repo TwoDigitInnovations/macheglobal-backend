@@ -9,7 +9,7 @@ router.get('/conversations/:userId', chatController.getConversations);
 router.get('/messages/:userId/:otherUserId', chatController.getMessages);
 
 // Mark messages as read
-router.post('/messages/mark-read', chatController.markMessagesAsRead);
+router.post('/mark-read', chatController.markMessagesAsRead);
 
 // Get unread message count
 router.get('/unread-count/:userId', chatController.getUnreadCount);
