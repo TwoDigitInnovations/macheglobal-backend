@@ -9,7 +9,9 @@ const SellerWallet = require('../models/SellerWallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const ErrorResponse = require('../utils/errorResponse');
 const CreditTransaction = require('../models/CreditTransaction');
-const { v4: uuidv4 } = require('uuid');
+
+// Use crypto.randomUUID() as a replacement for uuid
+const { randomUUID } = require('crypto');
 
 // Helper function to process commission for each order item
 const processOrderItemCommission = async (orderItem, orderId, session) => {
@@ -120,7 +122,7 @@ const processOrderItemCommission = async (orderItem, orderId, session) => {
             type: 'CREDIT',
             status: 'COMPLETED',
             description: `Sale of ${orderItem.qty}x ${orderItem.name}`,
-            referenceId: `TXN-${uuidv4()}`,
+            referenceId: `TXN-${randomUUID()}`,
             metadata: {
                 itemId: orderItem._id,
                 quantity: orderItem.qty,
@@ -188,7 +190,7 @@ const processOrderItemCommission = async (orderItem, orderId, session) => {
             type: 'CREDIT',
             status: 'COMPLETED',
             description: `Commission from sale of ${orderItem.name} by ${seller.name}`,
-            referenceId: `TXN-${uuidv4()}`,
+            referenceId: `TXN-${randomUUID()}`,
             metadata: {
                 sellerId: seller._id,
                 sellerName: seller.name,
@@ -351,9 +353,8 @@ exports.createOrder = async (req, res, next) => {
             console.log(`Applying coupon ${couponCode} to order`);
         }
 
-        // Handle credit balance deduction if used
+        // Validate credit balance if used (but don't deduct yet - will deduct on payment success)
         if (creditUsed > 0) {
-            const CreditTransaction = require('../models/CreditTransaction');
             const user = await User.findById(userId).session(session);
             
             if (!user) {
@@ -364,14 +365,7 @@ exports.createOrder = async (req, res, next) => {
                 throw new Error('Insufficient credit balance');
             }
 
-            const balanceBefore = user.creditBalance;
-            const balanceAfter = balanceBefore - creditUsed;
-
-            // Deduct credit balance
-            user.creditBalance = balanceAfter;
-            await user.save({ session });
-
-            console.log(`Deducted ${creditUsed} from user ${userId} credit balance`);
+            console.log(`Credit balance validated: ${creditUsed} will be deducted on payment success`);
         }
 
         // Validate order items
@@ -413,8 +407,8 @@ exports.createOrder = async (req, res, next) => {
             shippingPrice,
             totalPrice,
             couponCode: couponCode || null,
-            isPaid: true, // Mark as paid immediately since we're processing payment
-            paidAt: Date.now(),
+            isPaid: false, // Will be marked as paid after payment confirmation
+            paymentStatus: 'pending',
             paymentResult: {
                 id: `manual-${Date.now()}`,
                 status: 'COMPLETED',
@@ -477,44 +471,11 @@ exports.createOrder = async (req, res, next) => {
             }
         }
 
-        // Mark coupon as used if provided
-        if (couponCode) {
-            const Coupon = require('../models/Coupon');
-            const coupon = await Coupon.findOne({ 
-                code: couponCode.toUpperCase() 
-            }).session(session);
-
-            if (coupon) {
-                coupon.usedBy.push({
-                    userId: userId,
-                    orderId: createdOrder._id,
-                    usedAt: new Date()
-                });
-                coupon.usageCount += 1;
-                await coupon.save({ session });
-                console.log(`Coupon ${couponCode} marked as used by user ${userId}`);
-            }
-        }
-
-        // Create credit transaction if credit was used
-        if (creditUsed > 0) {
-            const CreditTransaction = require('../models/CreditTransaction');
-            const user = await User.findById(userId).session(session);
-            
-            const creditTransaction = new CreditTransaction({
-                user: userId,
-                order: createdOrder._id,
-                amount: creditUsed,
-                type: 'debit',
-                reason: 'order_payment',
-                description: `Payment for order #${createdOrder.orderId}`,
-                balanceBefore: user.creditBalance + creditUsed,
-                balanceAfter: user.creditBalance
-            });
-            await creditTransaction.save({ session });
-            
-            console.log(`Created credit transaction for ${creditUsed} deduction`);
-        }
+        // DON'T mark coupon as used yet - will be done on payment success
+        // Coupon will be marked as used in the payment success webhook
+        
+        // DON'T create credit transaction yet - will be done on payment success
+        // Credit will be deducted in the payment success webhook
 
         // Create order notification
         try {
@@ -525,68 +486,19 @@ exports.createOrder = async (req, res, next) => {
             // Don't fail the order if notification fails
         }
 
-        const commissionResults = [];
-
-        for (const item of orderItems) {
-            try {
-                const result = await processOrderItemCommission(item, createdOrder._id, session);
-                console.log('Commission processed successfully:', result);
-                commissionResults.push(result);
-            } catch (itemError) {
-                console.error(`Error processing commission for item ${item._id}:`, itemError);
-                console.error('Item causing error:', JSON.stringify(item, null, 2));
-                
-                // Try to find the seller in the database
-                try {
-                    const seller = await User.findById(item.seller).session(session);
-                    console.error('Seller status:', seller ? 
-                        `Found: ${seller._id}, Active: ${seller.isActive}, Email: ${seller.email}` : 
-                        'Not found');
-                } catch (e) {
-                    console.error('Error checking seller status:', e);
-                }
-                
-                commissionResults.push({ 
-                    success: false, 
-                    error: itemError.message,
-                    item: {
-                        productId: item.product,
-                        sellerId: item.seller,
-                        price: item.price,
-                        quantity: item.qty
-                    }
-                });
-            }
-        }
+        // DON'T process commission yet - will be done on payment success
+        // Commission will be processed in the payment success webhook
         
-        // Check if any commissions failed
-        const failedCommissions = commissionResults.filter(r => !r.success);
-        if (failedCommissions.length > 0) {
-            console.error('Some commissions failed to process:', failedCommissions);
-            throw new Error(`Failed to process commissions for ${failedCommissions.length} items`);
-        }
-
         // Commit the transaction
         await session.commitTransaction();
         session.endSession();
         
-        console.log('Successfully created order and processed commissions:', createdOrder._id);
-        
-        // Calculate total commissions
-        const totalAdminCommission = commissionResults.reduce((sum, r) => sum + (r.adminCommission || 0), 0);
-        const totalSellerEarnings = commissionResults.reduce((sum, r) => sum + (r.sellerEarning || 0), 0);
+        console.log('Successfully created order (pending payment):', createdOrder._id);
         
         res.status(201).json({
             success: true,
-            data: {
-                ...createdOrder.toObject(),
-                commissionDetails: {
-                    totalAdminCommission,
-                    totalSellerEarnings,
-                    itemsProcessed: commissionResults.length
-                }
-            },
-            message: 'Order created and payment processed successfully'
+            data: createdOrder,
+            message: 'Order created successfully, awaiting payment confirmation'
         });
     } catch (error) {
         console.error('Error in createOrder:', error);
@@ -735,21 +647,29 @@ exports.getMyOrders = async (req, res, next) => {
 
         console.log(`Fetching orders for user ID: ${userId}, page: ${page}, limit: ${limit}`);
 
-        // Get total count for pagination
-        const total = await Order.countDocuments({
+        // Build query - exclude cancelled and pending orders by default
+        const query = {
             $or: [
                 { user: userId },
                 { user: { $eq: userId } }
+            ],
+            // Only show paid orders or orders that are being processed
+            $and: [
+                { paymentStatus: { $ne: 'cancelled' } }, // Exclude cancelled
+                { 
+                    $or: [
+                        { isPaid: true }, // Show paid orders
+                        { paymentStatus: 'completed' } // Show completed orders
+                    ]
+                }
             ]
-        });
+        };
+
+        // Get total count for pagination
+        const total = await Order.countDocuments(query);
 
         // Get paginated orders
-        const orders = await Order.find({ 
-            $or: [
-                { user: userId },
-                { user: { $eq: userId } }
-            ]
-        })
+        const orders = await Order.find(query)
         .sort({ createdAt: -1 }) // Sort by newest first
         .skip(skip)
         .limit(limit)

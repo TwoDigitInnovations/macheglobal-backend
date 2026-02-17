@@ -5,7 +5,8 @@ const {
   handleIconeWebhook,
   handlePaymentSuccess,
   handlePaymentCancel,
-  checkPaymentStatus
+  checkPaymentStatus,
+  cancelOrder
 } = require('../controllers/iconePaymentController');
 const { authenticate } = require('../middlewares/authMiddleware');
 
@@ -18,5 +19,8 @@ router.get('/success', handlePaymentSuccess);
 router.get('/cancel', handlePaymentCancel);
 
 router.get('/status/:orderId', authenticate, checkPaymentStatus);
+
+// Manual order cancellation from app
+router.post('/cancel-order/:orderId', authenticate, cancelOrder);
 
 module.exports = router;
