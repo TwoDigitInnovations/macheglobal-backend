@@ -192,6 +192,20 @@ const setupChatSocket = (io) => {
           console.log('⚠️ [MESSAGE] Receiver not online:', receiverId);
         }
 
+        // Send OneSignal push notification to receiver
+        try {
+          const User = require('../models/User');
+          const { sendChatNotification } = require('../services/oneSignalService');
+          
+          const sender = await User.findById(senderId);
+          const senderName = sender?.name || 'Someone';
+          
+          await sendChatNotification(receiverId, senderName, message);
+          console.log('✅ [PUSH] OneSignal notification sent to receiver:', receiverId);
+        } catch (pushError) {
+          console.error('❌ [PUSH] Error sending OneSignal notification:', pushError);
+        }
+
       } catch (error) {
         console.error('❌ [MESSAGE] Error sending message:', error);
         console.error('❌ [MESSAGE] Error stack:', error.stack);

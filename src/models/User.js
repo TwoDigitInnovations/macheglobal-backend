@@ -53,6 +53,10 @@ const userSchema = new mongoose.Schema(
       enum: ['pending', 'verified', 'suspend'],
       default: 'pending'
     },
+    oneSignalPlayerId: {
+      type: String,
+      default: null
+    },
     resetPasswordToken: {
       type: String,
       default: null

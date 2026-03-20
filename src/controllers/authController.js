@@ -734,5 +734,43 @@ module.exports = {
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
+  },
+
+  updatePlayerId: async (req, res) => {
+    try {
+      const { playerId } = req.body;
+      const userId = req.user.id;
+
+      if (!playerId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Player ID is required'
+        });
+      }
+
+      const user = await User.findByIdAndUpdate(
+        userId,
+        { oneSignalPlayerId: playerId },
+        { new: true }
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Player ID updated successfully'
+      });
+    } catch (error) {
+      console.error('Update player ID error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update player ID'
+      });
+    }
   }
 };

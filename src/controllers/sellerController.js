@@ -136,6 +136,21 @@ const createSellerStore = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating store:', error);
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      const message = field === 'email' 
+        ? 'This email is already registered with another store. Please use a different email.'
+        : `This ${field} is already registered. Please use different details.`;
+      
+      return res.status(400).json({
+        success: false,
+        message: message,
+        error: error.message
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Error creating store',

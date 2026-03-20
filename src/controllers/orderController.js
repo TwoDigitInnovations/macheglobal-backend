@@ -4,6 +4,7 @@ const Product = require('../models/product');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const { createOrderNotification } = require('./notificationController');
+const { sendOrderNotification, sendNotification } = require('../services/oneSignalService');
 const AdminWallet = require('../models/AdminWallet');
 const SellerWallet = require('../models/SellerWallet');
 const WalletTransaction = require('../models/WalletTransaction');
@@ -477,19 +478,55 @@ exports.createOrder = async (req, res, next) => {
         // DON'T create credit transaction yet - will be done on payment success
         // Credit will be deducted in the payment success webhook
 
-        // Create order notification
         try {
             await createOrderNotification(createdOrder._id, req.body.user, session);
             console.log('Order notification created for order:', createdOrder._id);
         } catch (notificationErr) {
             console.error('Error creating order notification:', notificationErr);
-            // Don't fail the order if notification fails
         }
 
-        // DON'T process commission yet - will be done on payment success
-        // Commission will be processed in the payment success webhook
-        
-        // Commit the transaction
+        // Send OneSignal notification to buyer
+        try {
+            await sendOrderNotification(req.body.user, createdOrder._id, 'pending');
+            console.log('✅ OneSignal notification sent to buyer:', req.body.user);
+        } catch (notificationErr) {
+            console.error('Error sending OneSignal notification to buyer:', notificationErr);
+        }
+
+        // Send OneSignal notification to all sellers whose products are in the order
+        try {
+            const sellerIds = new Set();
+            for (const item of orderItems) {
+                if (item.seller) {
+                    sellerIds.add(item.seller.toString());
+                }
+            }
+
+            // Send notification to each unique seller
+            for (const sellerId of sellerIds) {
+                try {
+                    const seller = await User.findById(sellerId);
+                    if (seller && seller.oneSignalPlayerId) {
+                        await sendNotification(
+                            seller.oneSignalPlayerId,
+                            'New Order Received!',
+                            `You have received a new order #${createdOrder._id.toString().slice(-6)}`,
+                            { 
+                                type: 'new_order', 
+                                orderId: createdOrder._id.toString(),
+                                orderNumber: createdOrder._id.toString().slice(-6)
+                            }
+                        );
+                        console.log('✅ OneSignal notification sent to seller:', sellerId);
+                    }
+                } catch (sellerNotifErr) {
+                    console.error(`Error sending notification to seller ${sellerId}:`, sellerNotifErr);
+                }
+            }
+        } catch (sellerNotificationErr) {
+            console.error('Error sending seller notifications:', sellerNotificationErr);
+        }
+
         await session.commitTransaction();
         session.endSession();
         
