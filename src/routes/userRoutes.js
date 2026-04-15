@@ -33,4 +33,6 @@ router.get('/getUserList', user.getUserList);
 router.get('/getsetting', setting.getSetting);
 router.post('/createOrUpdateImage', authenticate, setting.createOrUpdateImage);
 router.post('/updateStatusSeller', user.updateStatus);
+router.post('/updateSellerCommission', authenticate, user.updateSellerCommission);
+router.post('/updateGlobalCommission', authenticate, setting.updateGlobalCommission);
 module.exports = router;

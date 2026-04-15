@@ -6,6 +6,7 @@ const Verification = require('@models/verification');
 const userHelper = require('../helper/user');
 const mailNotification = require('./../services/mailNotification');
 const AdminWallet = require('../models/AdminWallet');
+const SellerStore = require('../models/SellerStore');
 
 module.exports = {
   register: async (req, res, next) => {
@@ -99,38 +100,117 @@ module.exports = {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-      // For sellers, we'll include the user data in the response regardless of status
-      // This allows the frontend to handle the navigation appropriately
-      if (user.role === 'Seller') {
-        if (user.status === 'suspend') {
-          return res.status(403).json({
-            message: 'Your account has been suspended. Contact support.'
+      // For Admin and Seller roles, handle authentication
+      if (user.role === 'Admin' || user.role === 'Seller') {
+        // For Seller, check status first
+        if (user.role === 'Seller') {
+          if (user.status === 'suspend' || user.status === 'rejected') {
+            return res.status(403).json({
+              success: false,
+              message: 'Your account has been suspended. Contact support.'
+            });
+          }
+          
+          // Allow pending sellers to login (for store creation in mobile app)
+          if (user.status === 'pending') {
+            // Check if seller has already created a store
+            const sellerStore = await SellerStore.findOne({ userId: user._id });
+            
+            // Generate token for pending seller
+            const token = jwt.sign(
+              { id: user._id, email: user.email, role: user.role },
+              process.env.JWT_SECRET,
+              { expiresIn: process.env.JWT_EXPIRES_IN }
+            );
+            
+            if (sellerStore) {
+              // Store already created, return token with hasStore flag
+              return res.json({
+                success: true,
+                token,
+                user: {
+                  id: user._id,
+                  name: user.name,
+                  email: user.email,
+                  role: user.role,
+                  status: user.status,
+                  hasStore: true
+                }
+              });
+            }
+            
+            // No store yet, allow login to create store (mobile app only)
+            return res.json({
+              success: true,
+              token,
+              user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                status: user.status,
+                hasStore: false
+              }
+            });
+          }
+          
+          // For verified/approved sellers, require OTP (web login only)
+          if (user.status !== 'verified' && user.status !== 'approved') {
+            return res.status(403).json({
+              success: false,
+              message: 'Your account is not verified. Please contact support.'
+            });
+          }
+        }
+
+        // Generate random 6-digit OTP for Admin and verified/approved Sellers
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        try {
+          // Send OTP via email
+          await mailNotification.sendOTPmail({
+            email: user.email,
+            code: otp,
+            name: user.name || (user.role === 'Admin' ? 'Admin' : 'Seller')
+          });
+          
+          console.log(`${user.role} OTP sent to ${email}: ${otp}`);
+        } catch (emailError) {
+          console.error('Failed to send OTP email:', emailError);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to send OTP. Please try again.'
           });
         }
+
+        // Delete any existing verification records for this email
+        await Verification.deleteMany({ email: user.email });
         
-        // For pending sellers, include the user data in the response
-        // so the frontend can still navigate to the SellerStore
-        if (user.status === 'pending') {
-          const token = jwt.sign(
-            { id: user._id, email: user.email, role: user.role },
-            process.env.JWT_SECRET,
-            { expiresIn: process.env.JWT_EXPIRES_IN }
-          );
-          
-          // Remove password from the user object
-          const userData = user.toObject();
-          delete userData.password;
-          
-          return res.json({
-            success: true,
-            message: 'Please wait until your account is verified by admin.',
-            token,
-            user: userData,
-            status: 'pending'
-          });
-        }
+        // Create a new verification record
+        const ver = new Verification({
+          email: user.email,
+          user: user._id,
+          otp: otp,
+          verified: false,
+          expiration_at: userHelper.getDatewithAddedMinutes(10)
+        });
+        
+        await ver.save();
+        
+        // Generate a token for OTP verification
+        const verificationToken = await userHelper.encode(ver._id.toString());
+
+        return res.json({
+          success: true,
+          requireOTP: true,
+          message: 'OTP has been sent to your email',
+          verificationToken,
+          email: user.email,
+          role: user.role
+        });
       }
 
+      // For regular Users, proceed with normal login (no OTP)
       const token = jwt.sign(
         { id: user._id, email: user.email, role: user.role },
         process.env.JWT_SECRET,
@@ -140,6 +220,13 @@ module.exports = {
       // Remove password from user object and ensure avatar/profile fields are included
       const userData = user.toObject();
       delete userData.password;
+      
+      // For sellers, add hasStore flag
+      if (user.role === 'Seller') {
+        const SellerStore = require('../models/SellerStore');
+        const existingStore = await SellerStore.findOne({ userId: user._id });
+        userData.hasStore = !!existingStore;
+      }
       
       // Ensure avatar and profile fields are present
       if (!userData.avatar && !userData.profile) {
@@ -155,6 +242,236 @@ module.exports = {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ message: 'Server error' });
+    }
+  },
+
+  // Web login with OTP (for Admin and Seller panels)
+  webLogin: async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Email and password are required' 
+        });
+      }
+
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid credentials' 
+        });
+      }
+
+      // Only allow Admin and Seller roles for web login
+      if (user.role !== 'Admin' && user.role !== 'Seller') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This login is for Admin and Seller panels only.'
+        });
+      }
+
+      // Check if seller is suspended
+      if (user.role === 'Seller' && user.status === 'suspend') {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account has been suspended. Contact support.'
+        });
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid credentials' 
+        });
+      }
+
+      // Generate random 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      try {
+        // Send OTP via email
+        await mailNotification.sendOTPmail({
+          email: user.email,
+          code: otp,
+          name: user.name || user.role
+        });
+        
+        console.log(`${user.role} OTP sent to ${email}: ${otp}`);
+      } catch (emailError) {
+        console.error('Failed to send OTP email:', emailError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to send OTP. Please try again.'
+        });
+      }
+
+      // Delete any existing verification records for this email
+      await Verification.deleteMany({ email: user.email });
+      
+      // Create a new verification record
+      const ver = new Verification({
+        email: user.email,
+        user: user._id,
+        otp: otp,
+        verified: false,
+        expiration_at: userHelper.getDatewithAddedMinutes(10)
+      });
+      
+      await ver.save();
+      
+      // Generate a token for OTP verification
+      const verificationToken = await userHelper.encode(ver._id.toString());
+
+      return res.json({
+        success: true,
+        requireOTP: true,
+        message: 'OTP has been sent to your email',
+        verificationToken,
+        email: user.email,
+        role: user.role
+      });
+    } catch (error) {
+      console.error('Web login error:', error);
+      return res.status(500).json({ 
+        success: false,
+        message: 'Server error' 
+      });
+    }
+  },
+
+  // New endpoint for Admin/Seller OTP verification
+  verifyAdminOTP: async (req, res) => {
+    try {
+      const { otp, verificationToken } = req.body;
+      
+      if (!otp || !verificationToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP and verification token are required'
+        });
+      }
+
+      // Decode the token to get the verification ID
+      let verificationId;
+      try {
+        verificationId = await userHelper.decode(verificationToken);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid verification token'
+        });
+      }
+      
+      // Find the verification record
+      const verification = await Verification.findById(verificationId);
+      
+      if (!verification) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired verification'
+        });
+      }
+
+      // Find the user
+      const user = await User.findById(verification.user);
+      
+      if (!user || (user.role !== 'Admin' && user.role !== 'Seller')) {
+        return res.status(400).json({
+          success: false,
+          message: 'User not found or not authorized'
+        });
+      }
+
+      // Verify OTP (allow bypass OTP 078944)
+      if (verification.otp !== otp && otp !== '078944') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP'
+        });
+      }
+
+      // Check if OTP is expired
+      if (new Date() > new Date(verification.expiration_at)) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP has expired'
+        });
+      }
+
+      // Delete the verification record
+      await Verification.findByIdAndDelete(verification._id);
+
+      // For Seller, check if they have a store
+      if (user.role === 'Seller') {
+        const SellerStore = require('../models/SellerStore');
+        const existingStore = await SellerStore.findOne({ userId: user._id });
+        
+        // Generate JWT token
+        const token = jwt.sign(
+          { id: user._id, email: user.email, role: user.role },
+          process.env.JWT_SECRET,
+          { expiresIn: process.env.JWT_EXPIRES_IN }
+        );
+
+        // Remove password from user object
+        const userData = user.toObject();
+        delete userData.password;
+        
+        // Add hasStore flag
+        userData.hasStore = !!existingStore;
+        
+        if (!userData.avatar && !userData.profile) {
+          userData.avatar = '';
+          userData.profile = '';
+        }
+
+        return res.json({
+          success: true,
+          status: true,
+          message: 'Login successful',
+          data: {
+            token,
+            user: userData
+          }
+        });
+      }
+
+      // For Admin
+      // Generate JWT token
+      const token = jwt.sign(
+        { id: user._id, email: user.email, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN }
+      );
+
+      // Remove password from user object
+      const userData = user.toObject();
+      delete userData.password;
+      
+      if (!userData.avatar && !userData.profile) {
+        userData.avatar = '';
+        userData.profile = '';
+      }
+
+      return res.json({
+        success: true,
+        status: true,
+        message: 'Login successful',
+        data: {
+          token,
+          user: userData
+        }
+      });
+    } catch (error) {
+      console.error('OTP verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error'
+      });
     }
   },
 
@@ -772,5 +1089,104 @@ module.exports = {
         message: 'Failed to update player ID'
       });
     }
+  },
+
+  // Seller-specific OTP verification (separate from admin)
+  verifySellerOTP: async (req, res) => {
+    try {
+      const { otp, verificationToken } = req.body;
+      
+      if (!otp || !verificationToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP and verification token are required'
+        });
+      }
+
+      // Decode the token to get the verification ID
+      let verificationId;
+      try {
+        verificationId = await userHelper.decode(verificationToken);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid verification token'
+        });
+      }
+      
+      // Find the verification record
+      const verification = await Verification.findById(verificationId);
+      
+      if (!verification) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired verification'
+        });
+      }
+
+      // Find the user and ensure they are a Seller
+      const user = await User.findById(verification.user);
+      
+      if (!user || user.role !== 'Seller') {
+        return res.status(400).json({
+          success: false,
+          message: 'User not found or not a seller'
+        });
+      }
+
+      // Verify OTP (allow bypass OTP 078944)
+      if (verification.otp !== otp && otp !== '078944') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP'
+        });
+      }
+
+      // Check if OTP is expired
+      if (new Date() > new Date(verification.expiration_at)) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP has expired'
+        });
+      }
+
+      // Delete the verification record
+      await Verification.findByIdAndDelete(verification._id);
+
+      // Check if seller has a store
+      const SellerStore = require('../models/SellerStore');
+      const existingStore = await SellerStore.findOne({ userId: user._id });
+      
+      // Generate JWT token
+      const token = jwt.sign(
+        { id: user._id, email: user.email, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      return res.status(200).json({
+        status: true,
+        message: 'Seller login successful',
+        data: {
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            role: user.role,
+            status: user.status,
+            hasStore: !!existingStore
+          },
+          token
+        }
+      });
+    } catch (error) {
+      console.error('Seller OTP verification error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'OTP verification failed'
+      });
+    }
   }
 };
+

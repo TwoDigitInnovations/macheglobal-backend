@@ -183,13 +183,22 @@ module.exports = {
       }
       
       // Update the user status
-      user.status = Status; // 'verified' for user
+      user.status = Status;
       await user.save();
       
       console.log('Updated user status:', { userId: user._id, status: Status });
       
-      // Update the seller store status - use 'approved' instead of 'verified'
-      const storeStatus = Status === 'verified' ? 'approved' : Status;
+      // Update the seller store status - map user status to store status if needed
+      let storeStatus = Status; // Default: use same status
+      
+      // If using old status values, map them to new ones
+      if (Status === 'verified') {
+        storeStatus = 'approved';
+      } else if (Status === 'suspend') {
+        storeStatus = 'rejected';
+      }
+      // If already using new values (approved/rejected), keep them as is
+      
       sellerStore.status = storeStatus;
       await sellerStore.save();
       
@@ -198,8 +207,8 @@ module.exports = {
         status: storeStatus 
       });
       
-      // If status is verified, create a wallet if it doesn't exist
-      if (Status.toLowerCase() === 'verified') {
+      // If status is verified or approved, create a wallet if it doesn't exist
+      if (Status.toLowerCase() === 'verified' || Status.toLowerCase() === 'approved') {
         const existingWallet = await SellerWallet.findOne({
           sellerId: user._id
         });
@@ -236,6 +245,55 @@ module.exports = {
         success: false,
         message: error.message || 'Internal server error',
         error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  },
+
+  // Update seller commission rate
+  updateSellerCommission: async (req, res) => {
+    try {
+      const { sellerId, commissionRate } = req.body;
+      
+      if (!sellerId) {
+        return response.error(res, 'Seller ID is required');
+      }
+      
+      if (commissionRate === undefined || commissionRate === null) {
+        return response.error(res, 'Commission rate is required');
+      }
+      
+      if (commissionRate < 0 || commissionRate > 100) {
+        return response.error(res, 'Commission rate must be between 0 and 100');
+      }
+      
+      // Find the seller
+      const seller = await User.findById(sellerId);
+      
+      if (!seller) {
+        return response.error(res, 'Seller not found');
+      }
+      
+      if (seller.role !== 'Seller') {
+        return response.error(res, 'User is not a seller');
+      }
+      
+      // Update commission rate
+      seller.commissionRate = commissionRate;
+      await seller.save();
+      
+      return response.ok(res, {
+        success: true,
+        message: 'Commission rate updated successfully',
+        data: {
+          sellerId: seller._id,
+          commissionRate: seller.commissionRate
+        }
+      });
+    } catch (error) {
+      console.error('Error updating seller commission:', error);
+      return response.error(res, {
+        success: false,
+        message: error.message || 'Internal server error'
       });
     }
   }

@@ -10,6 +10,7 @@ const SellerWallet = require('../models/SellerWallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const ErrorResponse = require('../utils/errorResponse');
 const CreditTransaction = require('../models/CreditTransaction');
+const Setting = require('../models/setting');
 
 // Use crypto.randomUUID() as a replacement for uuid
 const { randomUUID } = require('crypto');
@@ -82,15 +83,39 @@ const processOrderItemCommission = async (orderItem, orderId, session) => {
             console.warn(`Seller ${seller._id} is not active but will be used`);
         }
 
+        // Get commission rate for this seller
+        let commissionRate = 2; // Default fallback
+        
+        try {
+            // First check if seller has custom commission rate
+            if (seller.commissionRate !== null && seller.commissionRate !== undefined) {
+                commissionRate = seller.commissionRate;
+                console.log(`Using seller's custom commission rate: ${commissionRate}%`);
+            } else {
+                // Use global commission rate
+                const setting = await Setting.findOne().session(session);
+                if (setting && setting.globalCommissionRate !== null && setting.globalCommissionRate !== undefined) {
+                    commissionRate = setting.globalCommissionRate;
+                    console.log(`Using global commission rate: ${commissionRate}%`);
+                } else {
+                    console.log(`No commission rate found, using default: ${commissionRate}%`);
+                }
+            }
+        } catch (err) {
+            console.error('Error fetching commission rate, using default 2%:', err);
+            commissionRate = 2;
+        }
+
         const itemTotal = orderItem.price * orderItem.qty;
-        const adminCommission = parseFloat((itemTotal * 0.02).toFixed(2)); // 2% commission
+        const adminCommission = parseFloat((itemTotal * (commissionRate / 100)).toFixed(2));
         const sellerEarning = parseFloat((itemTotal - adminCommission).toFixed(2));
         const currentDate = new Date();
         const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
 
         console.log(`Processing commission for order item ${orderItem._id}:`);
         console.log(`- Item Total: ${itemTotal}`);
-        console.log(`- Admin Commission (2%): ${adminCommission}`);
+        console.log(`- Commission Rate: ${commissionRate}%`);
+        console.log(`- Admin Commission: ${adminCommission}`);
         console.log(`- Seller Earning: ${sellerEarning}`);
 
         // Find or create seller's wallet
@@ -420,63 +445,103 @@ exports.createOrder = async (req, res, next) => {
 
         const createdOrder = await order.save({ session });
 
-        // Deduct stock for ordered items
-        const Product = require('../models/product');
-        for (const item of orderItems) {
-            const product = await Product.findById(item.product).session(session);
-            
-            if (product) {
-                // Check if it's a variable product with variants
-                if (product.productType === 'variable' && item.selectedAttributes) {
-                    // Find the matching variant using order-independent comparison
-                    const variantIndex = product.variants.findIndex(v => {
-                        if (!v.attributes || !Array.isArray(v.attributes)) return false;
-                        if (!item.selectedAttributes || !Array.isArray(item.selectedAttributes)) return false;
-                        
-                        // Check if all attributes match (order-independent)
-                        const allMatch = item.selectedAttributes.every(itemAttr => 
-                            v.attributes.some(variantAttr => 
-                                variantAttr.name === itemAttr.name && variantAttr.value === itemAttr.value
-                            )
-                        );
-                        
-                        const noExtra = v.attributes.every(variantAttr =>
-                            item.selectedAttributes.some(itemAttr =>
-                                itemAttr.name === variantAttr.name && itemAttr.value === variantAttr.value
-                            )
-                        );
-                        
-                        return allMatch && noExtra;
-                    });
+        // For COD orders, deduct stock immediately
+        if (paymentMethod === 'cod') {
+            console.log('COD order - deducting stock immediately');
+            for (const item of orderItems) {
+                const product = await Product.findById(item.product).session(session);
+                if (product) {
+                    console.log(`\n🔍 Processing stock for product: ${item.product}`);
+                    console.log(`📦 Order quantity: ${item.qty}`);
+                    console.log(`🔢 Variant Index: ${item.variantIndex}`);
                     
-                    if (variantIndex !== -1 && product.variants[variantIndex]) {
-                        // Deduct stock from variant
-                        const oldStock = product.variants[variantIndex].stock;
-                        product.variants[variantIndex].stock -= item.qty;
-                        console.log(`Deducted ${item.qty} from variant ${variantIndex} stock. Old: ${oldStock}, New: ${product.variants[variantIndex].stock}`);
+                    if (item.variantIndex !== null && item.variantIndex !== undefined) {
+                        // Variant product
+                        if (product.variants && product.variants[item.variantIndex]) {
+                            const oldStock = product.variants[item.variantIndex].stock;
+                            product.variants[item.variantIndex].stock -= item.qty;
+                            const newStock = product.variants[item.variantIndex].stock;
+                            console.log(`✅ VARIANT: Stock ${oldStock} - ${item.qty} = ${newStock}`);
+                        }
                     } else {
-                        console.warn(`No matching variant found for product ${item.product}. Attributes:`, item.selectedAttributes);
+                        // Simple product - update simpleProduct.stock
+                        if (product.simpleProduct) {
+                            const oldStock = product.simpleProduct.stock;
+                            product.simpleProduct.stock -= item.qty;
+                            const newStock = product.simpleProduct.stock;
+                            console.log(`✅ SIMPLE: Stock ${oldStock} - ${item.qty} = ${newStock}`);
+                        }
                     }
-                } else {
-                    // Simple product - deduct from simpleProduct.stock or pieces
-                    if (product.simpleProduct && product.simpleProduct.stock !== undefined) {
-                        product.simpleProduct.stock -= item.qty;
-                        console.log(`Deducted ${item.qty} from simpleProduct stock. New stock: ${product.simpleProduct.stock}`);
-                    } else if (product.pieces !== undefined) {
-                        product.pieces -= item.qty;
-                        console.log(`Deducted ${item.qty} from pieces. New pieces: ${product.pieces}`);
-                    }
+                    await product.save({ session });
+                    console.log(`💾 Product saved successfully\n`);
                 }
-                
-                await product.save({ session });
             }
-        }
 
-        // DON'T mark coupon as used yet - will be done on payment success
-        // Coupon will be marked as used in the payment success webhook
-        
-        // DON'T create credit transaction yet - will be done on payment success
-        // Credit will be deducted in the payment success webhook
+            // Mark coupon as used for COD
+            if (couponCode) {
+                const Coupon = require('../models/Coupon');
+                const coupon = await Coupon.findOne({ code: couponCode.toUpperCase() }).session(session);
+                if (coupon) {
+                    coupon.usedBy.push({
+                        userId,
+                        orderId: createdOrder._id,
+                        usedAt: new Date()
+                    });
+                    coupon.usageCount += 1;
+                    await coupon.save({ session });
+                    console.log(`Coupon ${couponCode} marked as used for COD order`);
+                }
+            }
+
+            // Deduct credit for COD
+            if (creditUsed > 0) {
+                const Credit = require('../models/Credit');
+                const credit = await Credit.findOne({ userId }).session(session);
+                if (credit) {
+                    credit.balance -= creditUsed;
+                    credit.transactions.push({
+                        type: 'debit',
+                        amount: creditUsed,
+                        description: `Used for order ${createdOrder._id}`,
+                        orderId: createdOrder._id
+                    });
+                    await credit.save({ session });
+                    console.log(`Credit deducted for COD order: ${creditUsed}`);
+                }
+            }
+
+            // Process commissions for COD orders
+            console.log('Processing commissions for COD order');
+            const commissionResults = [];
+            for (const item of createdOrder.orderItems) {
+                try {
+                    console.log(`Processing commission for COD item: ${item._id}`);
+                    const result = await processOrderItemCommission(item, createdOrder._id, session);
+                    commissionResults.push(result);
+                } catch (itemError) {
+                    console.error(`Error processing commission for item ${item._id}:`, itemError);
+                    commissionResults.push({ success: false, error: itemError.message });
+                }
+            }
+
+            // Check if all commissions were processed successfully
+            const failedCommissions = commissionResults.filter(r => !r.success);
+            if (failedCommissions.length > 0) {
+                console.error('Some COD commissions failed to process:', failedCommissions);
+            } else {
+                console.log('All COD commissions processed successfully');
+            }
+
+            // Update order status for COD
+            createdOrder.paymentStatus = 'pending';
+            createdOrder.orderStatus = 'processing';
+            createdOrder.isPaid = false; // COD is not paid yet
+            await createdOrder.save({ session });
+            console.log('COD order marked as processing with commissions calculated');
+        } else {
+            // For online payment, stock will be deducted on payment success
+            console.log('Online payment order - stock will be deducted on payment confirmation');
+        }
 
         try {
             await createOrderNotification(createdOrder._id, req.body.user, session);

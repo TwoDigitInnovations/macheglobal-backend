@@ -50,8 +50,14 @@ const userSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'verified', 'suspend'],
+      enum: ['pending', 'verified', 'suspend', 'approved', 'rejected'],
       default: 'pending'
+    },
+    commissionRate: {
+      type: Number,
+      default: null, // null means use global commission rate
+      min: 0,
+      max: 100
     },
     oneSignalPlayerId: {
       type: String,

@@ -26,6 +26,12 @@ const settingSchema = new mongoose.Schema(
     },
     ApiPrivateKey: {
       type: String
+    },
+    globalCommissionRate: {
+      type: Number,
+      default: 2, // Default 2% commission
+      min: 0,
+      max: 100
     }
   },
   {

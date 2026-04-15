@@ -91,5 +91,42 @@ module.exports = {
         message: e.message
       });
     }
+  },
+
+  updateGlobalCommission: async (req, res) => {
+    try {
+      const { globalCommissionRate } = req.body;
+      
+      if (globalCommissionRate === undefined || globalCommissionRate === null) {
+        return res.status(400).json({
+          success: false,
+          message: 'Global commission rate is required'
+        });
+      }
+      
+      if (globalCommissionRate < 0 || globalCommissionRate > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Commission rate must be between 0 and 100'
+        });
+      }
+      
+      const setting = await Setting.findOneAndUpdate(
+        {},
+        { $set: { globalCommissionRate } },
+        { new: true, upsert: true }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Global commission rate updated successfully!',
+        data: setting
+      });
+    } catch (e) {
+      return res.status(500).json({
+        success: false,
+        message: e.message
+      });
+    }
   }
 };

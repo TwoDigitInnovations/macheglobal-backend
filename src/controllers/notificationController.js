@@ -114,13 +114,18 @@ exports.createOrderNotification = async (orderId, userId, session = null) => {
       }], { session });
 
       // Populate the notification with order and suggested products
-      const populatedNotification = await Notification
-        .findById(notification[0]._id)
-        .populate('order')
-        .populate('suggestedProducts');
+      if (notification && notification.length > 0 && notification[0]._id) {
+        const populatedNotification = await Notification
+          .findById(notification[0]._id)
+          .populate('order')
+          .populate('suggestedProducts');
 
-      console.log('Successfully created notification:', populatedNotification._id);
-      return populatedNotification;
+        console.log('Successfully created notification:', populatedNotification._id);
+        return populatedNotification;
+      } else {
+        console.log('Notification created but could not populate');
+        return null;
+      }
       
     } catch (err) {
       if (retryCount === maxRetries - 1) {

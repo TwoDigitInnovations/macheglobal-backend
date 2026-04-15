@@ -367,7 +367,7 @@ const getAllSellerStores = async (req, res) => {
     console.log('Final query:', JSON.stringify(query, null, 2));
 
     const stores = await SellerStore.find(query)
-      .populate('userId', 'name email phone status')
+      .populate('userId', 'name email phone status commissionRate')
       .select('-__v')
       .limit(limit * 1)
       .skip((page - 1) * limit)
