@@ -1266,10 +1266,10 @@ getProductById: async (req, res) => {
       });
       console.log('Seller total stock:', totalStock);
       
-      // Get seller's orders (orders containing seller's products)
+      // Get seller's orders (orders containing seller's products) - include COD orders too
       const sellerOrders = await Order.find({
         'orderItems.product': { $in: productIds },
-        isPaid: true
+        paymentStatus: { $ne: 'cancelled' }
       });
       
       // Calculate total sales from seller's products
@@ -1283,12 +1283,10 @@ getProductById: async (req, res) => {
       });
       console.log('Seller total sales:', totalSales);
       
-      // Get pending orders for seller
+      // Get pending orders for seller (only truly pending/processing orders)
       const pendingOrdersCount = await Order.countDocuments({
         'orderItems.product': { $in: productIds },
-        isPaid: true,
-        isDelivered: false,
-        status: { $nin: ['cancelled', 'returned'] }
+        status: 'pending'
       });
       console.log('Seller pending orders:', pendingOrdersCount);
       

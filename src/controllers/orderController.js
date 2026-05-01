@@ -749,22 +749,14 @@ exports.getMyOrders = async (req, res, next) => {
 
         console.log(`Fetching orders for user ID: ${userId}, page: ${page}, limit: ${limit}`);
 
-        // Build query - exclude cancelled and pending orders by default
+        // Build query - exclude only cancelled orders
         const query = {
             $or: [
                 { user: userId },
                 { user: { $eq: userId } }
             ],
-            // Only show paid orders or orders that are being processed
-            $and: [
-                { paymentStatus: { $ne: 'cancelled' } }, // Exclude cancelled
-                { 
-                    $or: [
-                        { isPaid: true }, // Show paid orders
-                        { paymentStatus: 'completed' } // Show completed orders
-                    ]
-                }
-            ]
+            // Show all orders except cancelled ones (COD orders are isPaid: false but should still show)
+            paymentStatus: { $ne: 'cancelled' }
         };
 
         // Get total count for pagination
